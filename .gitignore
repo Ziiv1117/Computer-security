@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.py[cod]
+security_report.md
+security_report.html
+test_security_report.md
+test_security_report.html
+
