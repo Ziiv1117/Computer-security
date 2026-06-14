@@ -1,6 +1,7 @@
 .env
 __pycache__/
 *.py[cod]
+data/
 security_report.md
 security_report.html
 test_security_report.md

@@ -36,8 +36,10 @@ def generate_markdown_report(scan_result: dict) -> str:
                 f"- Category: {vulnerability.get('category', '')}",
                 f"- Risk: {vulnerability.get('risk', '')}",
                 f"- Score: {vulnerability.get('score', '')}",
+                f"- Confidence: {vulnerability.get('confidence', '')}",
                 f"- Method: {vulnerability.get('method', '')}",
                 f"- Location: {vulnerability.get('location', '')}",
+                f"- Fingerprint: {vulnerability.get('fingerprint', '')}",
                 f"- Evidence: {vulnerability.get('evidence', '')}",
                 f"- Suggestion: {vulnerability.get('suggestion', '')}",
                 "- AI Advice:",
@@ -65,8 +67,10 @@ def generate_html_report(scan_result: dict) -> str:
             <li><strong>Category:</strong> {escape(str(vulnerability.get('category', '')))}</li>
             <li><strong>Risk:</strong> {escape(str(vulnerability.get('risk', '')))}</li>
             <li><strong>Score:</strong> {escape(str(vulnerability.get('score', '')))}</li>
+            <li><strong>Confidence:</strong> {escape(str(vulnerability.get('confidence', '')))}</li>
             <li><strong>Method:</strong> {escape(str(vulnerability.get('method', '')))}</li>
             <li><strong>Location:</strong> {escape(str(vulnerability.get('location', '')))}</li>
+            <li><strong>Fingerprint:</strong> {escape(str(vulnerability.get('fingerprint', '')))}</li>
             <li><strong>Evidence:</strong> {escape(str(vulnerability.get('evidence', '')))}</li>
             <li><strong>Suggestion:</strong> {escape(str(vulnerability.get('suggestion', '')))}</li>
           </ul>

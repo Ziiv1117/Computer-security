@@ -415,6 +415,9 @@ dd {
   align-items: center;
   gap: 10px;
   color: var(--text-soft);
+  transition:
+    color 180ms ease,
+    transform 180ms ease;
 }
 
 .check-dot {
@@ -425,6 +428,11 @@ dd {
   border-radius: 999px;
   background: var(--primary);
   box-shadow: 0 0 18px var(--primary-glow);
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 .check-dot::after {
@@ -434,6 +442,35 @@ dd {
   border-left: 2px solid #fff;
   border-bottom: 2px solid #fff;
   transform: rotate(-45deg) translate(1px, -1px);
+}
+
+.module-list li.pending .check-dot {
+  background: rgba(131, 146, 168, 0.12);
+  border: 1px solid rgba(170, 202, 244, 0.25);
+  box-shadow: none;
+}
+
+.module-list li.pending .check-dot::after {
+  display: none;
+}
+
+.module-list li.running-state {
+  color: #dff3ff;
+}
+
+.module-list li.running-state .check-dot {
+  background: rgba(24, 199, 255, 0.24);
+  border: 1px solid rgba(24, 199, 255, 0.74);
+  animation: modulePulse 1.25s ease-in-out infinite;
+}
+
+.module-list li.running-state .check-dot::after {
+  display: none;
+}
+
+.module-list li.done .check-dot {
+  background: var(--success);
+  box-shadow: 0 0 18px rgba(34, 209, 138, 0.32);
 }
 
 .module-list .running {
@@ -491,6 +528,7 @@ dd {
 
 .radar {
   position: relative;
+  --progress: 0%;
   width: min(330px, 72vw);
   aspect-ratio: 1;
   border-radius: 50%;
@@ -505,6 +543,10 @@ dd {
     0 0 26px rgba(47, 140, 255, 0.45),
     inset 0 0 42px rgba(47, 140, 255, 0.26);
   overflow: hidden;
+  transition:
+    box-shadow 220ms ease,
+    border-color 220ms ease,
+    filter 220ms ease;
 }
 
 .radar::before {
@@ -521,15 +563,45 @@ dd {
     transparent 360deg
   );
   animation: sweep 4.2s linear infinite;
+  opacity: 0.86;
+  transition: opacity 200ms ease;
 }
 
 .radar::after {
   position: absolute;
-  inset: 16%;
+  inset: 8%;
   content: "";
   border-radius: inherit;
-  border: 1px solid rgba(112, 188, 255, 0.32);
-  box-shadow: 0 0 26px rgba(24, 199, 255, 0.16);
+  background:
+    conic-gradient(var(--primary-2) var(--progress), rgba(112, 188, 255, 0.08) 0),
+    radial-gradient(circle, transparent 61%, rgba(112, 188, 255, 0.32) 62% 63%, transparent 64%);
+  mask: radial-gradient(circle, transparent 58%, #000 59% 63%, transparent 64%);
+  filter: drop-shadow(0 0 14px rgba(24, 199, 255, 0.42));
+  transition: background 260ms ease;
+}
+
+.radar.idle {
+  border-color: rgba(87, 173, 255, 0.28);
+  filter: saturate(0.78);
+  box-shadow:
+    0 0 16px rgba(47, 140, 255, 0.18),
+    inset 0 0 32px rgba(47, 140, 255, 0.14);
+}
+
+.radar.idle::before {
+  opacity: 0.18;
+  animation-duration: 8s;
+}
+
+.radar.running .radar-core {
+  animation: corePulse 1.8s ease-in-out infinite;
+}
+
+.radar.complete {
+  border-color: rgba(34, 209, 138, 0.62);
+  box-shadow:
+    0 0 28px rgba(34, 209, 138, 0.3),
+    inset 0 0 42px rgba(34, 209, 138, 0.12);
 }
 
 .radar-core {
@@ -567,11 +639,37 @@ dd {
   }
 }
 
+@keyframes corePulse {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 26px rgba(47, 140, 255, 0.18),
+      0 0 28px rgba(0, 0, 0, 0.45);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 34px rgba(24, 199, 255, 0.28),
+      0 0 34px rgba(24, 199, 255, 0.16);
+  }
+}
+
+@keyframes modulePulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 12px rgba(24, 199, 255, 0.28);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 24px rgba(24, 199, 255, 0.5);
+  }
+}
+
 .scan-steps {
   display: grid;
   position: relative;
   z-index: 1;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   padding: 0;
   list-style: none;
@@ -581,6 +679,9 @@ dd {
   position: relative;
   color: var(--muted);
   font-size: 12px;
+  transition:
+    color 180ms ease,
+    transform 180ms ease;
 }
 
 .step-index {
@@ -593,6 +694,11 @@ dd {
   color: #cceaff;
   background: #0d1724;
   border: 2px solid rgba(170, 202, 244, 0.35);
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 .scan-steps li.done .step-index,
@@ -601,6 +707,31 @@ dd {
   border-color: var(--primary);
   background: rgba(47, 140, 255, 0.24);
   box-shadow: 0 0 22px var(--primary-glow);
+}
+
+.scan-steps li.active {
+  color: #dff3ff;
+  transform: translateY(-2px);
+}
+
+.scan-steps li.active .step-index {
+  animation: stepPulse 1.2s ease-in-out infinite;
+}
+
+.scan-steps li.done .step-index {
+  border-color: var(--success);
+  background: rgba(34, 209, 138, 0.2);
+  box-shadow: 0 0 18px rgba(34, 209, 138, 0.28);
+}
+
+@keyframes stepPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
 }
 
 .scan-steps strong {
@@ -631,6 +762,18 @@ dd {
   color: var(--text-soft);
   font-size: 13px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  animation: eventIn 220ms ease both;
+}
+
+@keyframes eventIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .event-level,

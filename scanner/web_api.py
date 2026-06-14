@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
+import secrets
+import tempfile
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock, Thread
+from threading import RLock, Thread
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from scanner.ai_advisor import generate_ai_advice, load_env_file
 from scanner.full_scan import run_full_security_scan
@@ -19,15 +22,32 @@ from scanner.report_generator import generate_html_report, generate_markdown_rep
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_ROOT = PROJECT_ROOT / "frontend"
+DATA_ROOT = PROJECT_ROOT / "data"
+STATE_FILE = DATA_ROOT / "scanner_state.json"
 DEFAULT_BASE_URL = "http://127.0.0.1:5001"
 DEFAULT_PROJECT_PATH = "./vulnerable_app"
 
 TASKS: dict[str, dict[str, Any]] = {}
-TASK_LOCK = Lock()
+TASK_LOCK = RLock()
 TASK_COUNTER = 0
 SETTINGS = {
     "default_base_url": DEFAULT_BASE_URL,
     "default_project_path": DEFAULT_PROJECT_PATH,
+}
+ASSETS: dict[str, dict[str, Any]] = {}
+REPORT_META: dict[str, dict[str, Any]] = {}
+SESSIONS: dict[str, dict[str, Any]] = {}
+USERS = {
+    "admin": {
+        "password_hash": hashlib.sha256("admin123".encode("utf-8")).hexdigest(),
+        "role": "admin",
+        "display_name": "Admin",
+    },
+    "viewer": {
+        "password_hash": hashlib.sha256("viewer123".encode("utf-8")).hexdigest(),
+        "role": "viewer",
+        "display_name": "Viewer",
+    },
 }
 
 SCAN_STEPS = [
@@ -61,10 +81,94 @@ def _clock() -> str:
     return _now().strftime("%H:%M:%S")
 
 
+def _save_state_locked() -> None:
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
+    state = {
+        "version": 1,
+        "task_counter": TASK_COUNTER,
+        "settings": SETTINGS,
+        "tasks": TASKS,
+        "assets": ASSETS,
+        "report_meta": REPORT_META,
+        "sessions": SESSIONS,
+        "saved_at": _timestamp(),
+    }
+    fd, temp_name = tempfile.mkstemp(prefix="scanner_state_", suffix=".json", dir=DATA_ROOT)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+            json.dump(state, temp_file, ensure_ascii=False, indent=2)
+        os.replace(temp_name, STATE_FILE)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _persist_state() -> None:
+    with TASK_LOCK:
+        _save_state_locked()
+
+
+def _load_state() -> None:
+    global TASK_COUNTER
+    if not STATE_FILE.exists():
+        return
+    try:
+        with STATE_FILE.open("r", encoding="utf-8") as state_file:
+            state = json.load(state_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"State load failed, starting with empty runtime state: {exc}")
+        return
+
+    settings = state.get("settings") if isinstance(state, dict) else {}
+    tasks = state.get("tasks") if isinstance(state, dict) else {}
+    assets = state.get("assets") if isinstance(state, dict) else {}
+    report_meta = state.get("report_meta") if isinstance(state, dict) else {}
+    sessions = state.get("sessions") if isinstance(state, dict) else {}
+    if isinstance(settings, dict):
+        SETTINGS.update(
+            {
+                "default_base_url": str(settings.get("default_base_url") or DEFAULT_BASE_URL),
+                "default_project_path": str(settings.get("default_project_path") or DEFAULT_PROJECT_PATH),
+            }
+        )
+    if isinstance(tasks, dict):
+        TASKS.clear()
+        for task_id, task in tasks.items():
+            if not isinstance(task, dict):
+                continue
+            if task.get("status") == "running":
+                task["status"] = "failed"
+                task["progress"] = 100
+                task["current_step"] = "服务重启后任务已中断"
+                task.setdefault("errors", []).append("Scanner service restarted before this task completed.")
+                task.setdefault("events", []).append(_event("WARN", "服务重启，运行中的扫描任务已标记为中断"))
+                task["completed_at"] = task.get("completed_at") or _timestamp()
+                for step in task.get("steps", []):
+                    if step.get("status") == "running":
+                        step["status"] = "failed"
+                        step["duration"] = "已中断"
+            TASKS[str(task_id)] = task
+    if isinstance(assets, dict):
+        ASSETS.clear()
+        ASSETS.update({str(asset_id): asset for asset_id, asset in assets.items() if isinstance(asset, dict)})
+    if isinstance(report_meta, dict):
+        REPORT_META.clear()
+        REPORT_META.update({str(task_id): meta for task_id, meta in report_meta.items() if isinstance(meta, dict)})
+    if isinstance(sessions, dict):
+        SESSIONS.clear()
+        SESSIONS.update({str(token): session for token, session in sessions.items() if isinstance(session, dict)})
+    TASK_COUNTER = max(int(state.get("task_counter") or 0), len(TASKS))
+    _persist_state()
+
+
 def _next_task_id() -> str:
     global TASK_COUNTER
     with TASK_LOCK:
         TASK_COUNTER += 1
+        _save_state_locked()
         return f"SCAN-{_now():%Y%m%d-%H%M%S}-{TASK_COUNTER:04d}"
 
 
@@ -74,6 +178,61 @@ def _initial_steps() -> list[dict[str, str]]:
 
 def _event(level: str, message: str) -> dict[str, str]:
     return {"time": _clock(), "level": level, "message": message}
+
+
+def _slug_id(prefix: str, value: str) -> str:
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}-{digest}"
+
+
+def _password_hash(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _create_session(username: str) -> dict[str, str]:
+    user = USERS[username]
+    token = secrets.token_urlsafe(24)
+    session = {
+        "token": token,
+        "username": username,
+        "role": user["role"],
+        "display_name": user["display_name"],
+        "created_at": _timestamp(),
+    }
+    with TASK_LOCK:
+        SESSIONS[token] = session
+        _save_state_locked()
+    return session
+
+
+def _upsert_asset(address: str, asset_type: str, *, name: str = "", task: dict[str, Any] | None = None) -> dict[str, Any]:
+    asset_id = _slug_id("ASSET", f"{asset_type}:{address}")
+    existing = ASSETS.get(asset_id, {})
+    result = (task or {}).get("result") or {}
+    risk = result.get("risk", {})
+    asset = {
+        "id": asset_id,
+        "name": name or existing.get("name") or ("扫描目标" if asset_type == "Web 应用" else "源码目录"),
+        "address": address,
+        "type": asset_type,
+        "risk": risk.get("overall_risk", existing.get("risk", "Low")),
+        "last_scan_at": (task or {}).get("completed_at") or existing.get("last_scan_at"),
+        "task_id": (task or {}).get("task_id") or existing.get("task_id"),
+        "created_at": existing.get("created_at") or _timestamp(),
+        "updated_at": _timestamp(),
+    }
+    ASSETS[asset_id] = asset
+    return asset
+
+
+def _sync_assets_for_task(task: dict[str, Any]) -> None:
+    target = task.get("target") or {}
+    base_url = target.get("base_url")
+    project_path = target.get("project_path")
+    if base_url:
+        _upsert_asset(str(base_url), "Web 应用", task=task)
+    if project_path:
+        _upsert_asset(str(project_path), "Codebase", task=task)
 
 
 def _set_task_state(
@@ -107,6 +266,7 @@ def _set_task_state(
                     step["duration"] = "进行中"
                 else:
                     step["status"] = "pending"
+        _save_state_locked()
 
 
 def _complete_steps(task_id: str) -> None:
@@ -116,6 +276,7 @@ def _complete_steps(task_id: str) -> None:
             step["status"] = "done"
             if step["duration"] in {"等待中", "进行中"}:
                 step["duration"] = "已完成"
+        _save_state_locked()
 
 
 def _public_task(task: dict[str, Any]) -> dict[str, Any]:
@@ -139,14 +300,18 @@ def _task_reports() -> list[dict[str, Any]]:
         result = task.get("result")
         if not result:
             continue
+        meta = REPORT_META.get(task["task_id"], {})
+        if meta.get("deleted"):
+            continue
         reports.append(
             {
                 "task_id": task["task_id"],
-                "name": f"{task['task_id']} 安全扫描报告",
+                "name": meta.get("name") or f"{task['task_id']} 安全扫描报告",
                 "target": task["target"],
                 "risk": result.get("risk", {}),
                 "vulnerability_total": len(result.get("vulnerabilities", [])),
                 "generated_at": task.get("completed_at") or task.get("created_at"),
+                "updated_at": meta.get("updated_at"),
                 "markdown_url": f"/api/report/{task['task_id']}/markdown",
                 "html_url": f"/api/report/{task['task_id']}/html",
             }
@@ -155,15 +320,18 @@ def _task_reports() -> list[dict[str, Any]]:
 
 
 def _task_assets() -> list[dict[str, Any]]:
-    assets: dict[str, dict[str, Any]] = {}
+    assets: dict[str, dict[str, Any]] = {asset_id: dict(asset) for asset_id, asset in ASSETS.items()}
     for task in TASKS.values():
         result = task.get("result") or {}
         risk = result.get("risk", {})
         base_url = task["target"].get("base_url", "")
         project_path = task["target"].get("project_path", "")
         if base_url:
-            assets[base_url] = {
-                "name": "扫描目标",
+            asset_id = _slug_id("ASSET", f"Web 应用:{base_url}")
+            existing = assets.get(asset_id, {})
+            assets[asset_id] = {
+                "id": asset_id,
+                "name": existing.get("name", "扫描目标"),
                 "address": base_url,
                 "type": "Web 应用",
                 "risk": risk.get("overall_risk", "Low"),
@@ -171,8 +339,11 @@ def _task_assets() -> list[dict[str, Any]]:
                 "task_id": task["task_id"],
             }
         if project_path:
-            assets[project_path] = {
-                "name": "源码目录",
+            asset_id = _slug_id("ASSET", f"Codebase:{project_path}")
+            existing = assets.get(asset_id, {})
+            assets[asset_id] = {
+                "id": asset_id,
+                "name": existing.get("name", "源码目录"),
                 "address": project_path,
                 "type": "Codebase",
                 "risk": risk.get("overall_risk", "Low"),
@@ -207,7 +378,9 @@ def _normalize_vulnerability(raw: dict[str, Any], index: int, discovered_at: str
         "location": location,
         "method": str(raw.get("method") or "UNKNOWN"),
         "evidence": evidence,
-        "evidence_count": 1 if evidence else 0,
+        "evidence_count": int(raw.get("evidence_count") or (1 if evidence else 0)),
+        "fingerprint": str(raw.get("fingerprint") or ""),
+        "confidence": str(raw.get("confidence") or "Medium"),
         "suggestion": str(raw.get("suggestion") or ""),
         "ai_advice": ai_advice,
         "description": VULNERABILITY_DESCRIPTIONS.get(vuln_type, evidence or "扫描器发现了一个需要人工复核的安全风险。"),
@@ -231,6 +404,7 @@ def _normalize_scan_result(task: dict[str, Any], scan_result: dict[str, Any]) ->
         "target": scan_result.get("target", task["target"]),
         "risk": scan_result.get("risk", {}),
         "vulnerabilities": vulnerabilities,
+        "discovery": scan_result.get("discovery", {"routes": [], "forms": [], "parameters": []}),
         "reports": {
             "markdown": "",
             "html": "",
@@ -258,18 +432,48 @@ def _run_task(task_id: str) -> None:
             step_index=0,
             events=[_event("INFO", f"开始连接目标 {target['base_url']}")],
         )
-        _set_task_state(task_id, progress=25, current_step="动态漏洞扫描", step_index=1)
+
+        def report_progress(step_name: str, progress: int, step_index: int) -> None:
+            _set_task_state(
+                task_id,
+                progress=progress,
+                current_step=step_name,
+                step_index=step_index,
+                events=[_event("INFO", step_name)],
+            )
+
+        _set_task_state(task_id, progress=18, current_step="准备扫描模块", step_index=0)
         scan_result = run_full_security_scan(
             base_url=target["base_url"],
             project_path=target["project_path"],
+            progress_callback=report_progress,
         )
 
         with TASK_LOCK:
             task = TASKS[task_id]
+            if task.get("cancel_requested"):
+                task["status"] = "cancelled"
+                task["progress"] = 100
+                task["current_step"] = "任务已取消"
+                task["completed_at"] = _timestamp()
+                task.setdefault("events", []).append(_event("WARN", "扫描任务已被用户取消，结果未写入报告中心"))
+                _save_state_locked()
+                return
             normalized = _normalize_scan_result(task, scan_result)
             task["result"] = normalized
             task["errors"] = normalized.get("errors", [])
             task["completed_at"] = _timestamp()
+            _sync_assets_for_task(task)
+            REPORT_META.setdefault(
+                task_id,
+                {
+                    "name": f"{task_id} 安全扫描报告",
+                    "created_at": task["completed_at"],
+                    "updated_at": task["completed_at"],
+                    "deleted": False,
+                },
+            )
+            _save_state_locked()
 
         _complete_steps(task_id)
         total = len(normalized.get("vulnerabilities", []))
@@ -285,6 +489,17 @@ def _run_task(task_id: str) -> None:
             ],
         )
     except Exception as exc:
+        with TASK_LOCK:
+            cancelled = TASKS.get(task_id, {}).get("cancel_requested")
+        if cancelled:
+            _set_task_state(
+                task_id,
+                status="cancelled",
+                progress=100,
+                current_step="任务已取消",
+                events=[_event("WARN", "扫描任务已取消")],
+            )
+            return
         _set_task_state(
             task_id,
             status="failed",
@@ -296,6 +511,7 @@ def _run_task(task_id: str) -> None:
             task = TASKS[task_id]
             task["errors"] = [str(exc)]
             task["completed_at"] = _timestamp()
+            _save_state_locked()
 
 
 def start_scan(payload: dict[str, Any]) -> dict[str, Any]:
@@ -319,9 +535,12 @@ def start_scan(payload: dict[str, Any]) -> dict[str, Any]:
         "result": None,
         "errors": [],
         "vulnerability_status": {},
+        "cancel_requested": False,
+        "advice_versions": {},
     }
     with TASK_LOCK:
         TASKS[task_id] = task
+        _save_state_locked()
 
     worker = Thread(target=_run_task, args=(task_id,), daemon=True)
     worker.start()
@@ -348,8 +567,8 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
 
     def end_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         super().end_headers()
 
     def do_OPTIONS(self) -> None:
@@ -366,11 +585,38 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/auth/login":
+            self._handle_login()
+            return
         if parsed.path == "/api/scan/start":
+            if not self._require_role("admin"):
+                return
             payload = self._read_json()
             self._send_json(start_scan(payload), HTTPStatus.ACCEPTED)
             return
+        if parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/rerun"):
+            if not self._require_role("admin"):
+                return
+            self._handle_task_rerun(parsed.path)
+            return
+        if parsed.path.startswith("/api/tasks/") and parsed.path.endswith("/cancel"):
+            if not self._require_role("admin"):
+                return
+            self._handle_task_cancel(parsed.path)
+            return
+        if parsed.path == "/api/assets":
+            if not self._require_role("admin"):
+                return
+            self._handle_asset_create()
+            return
+        if parsed.path.startswith("/api/assets/") and parsed.path.endswith("/scan"):
+            if not self._require_role("admin"):
+                return
+            self._handle_asset_scan(parsed.path)
+            return
         if parsed.path.startswith("/api/vulnerability/") and parsed.path.endswith("/ai-advice"):
+            if not self._require_role("admin"):
+                return
             self._handle_ai_advice(parsed.path)
             return
         self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
@@ -378,12 +624,57 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/settings":
+            if not self._require_role("admin"):
+                return
             self._handle_settings_update()
             return
+        if parsed.path.startswith("/api/assets/"):
+            if not self._require_role("admin"):
+                return
+            self._handle_asset_update(parsed.path)
+            return
+        if parsed.path.startswith("/api/report/"):
+            if not self._require_role("admin"):
+                return
+            self._handle_report_update(parsed.path)
+            return
         if parsed.path.startswith("/api/vulnerability/") and parsed.path.endswith("/status"):
+            if not self._require_role("admin"):
+                return
             self._handle_vulnerability_status(parsed.path)
             return
         self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/assets/"):
+            if not self._require_role("admin"):
+                return
+            self._handle_asset_delete(parsed.path)
+            return
+        if parsed.path.startswith("/api/report/"):
+            if not self._require_role("admin"):
+                return
+            self._handle_report_delete(parsed.path)
+            return
+        self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def _current_session(self) -> dict[str, Any] | None:
+        authorization = self.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            return None
+        token = authorization.removeprefix("Bearer ").strip()
+        return SESSIONS.get(token)
+
+    def _require_role(self, role: str) -> bool:
+        session = self._current_session()
+        if not session:
+            self._send_json({"error": "Authentication required"}, HTTPStatus.UNAUTHORIZED)
+            return False
+        if role == "admin" and session.get("role") != "admin":
+            self._send_json({"error": "Admin role required"}, HTTPStatus.FORBIDDEN)
+            return False
+        return True
 
     def _read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
@@ -412,9 +703,27 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _handle_login(self) -> None:
+        payload = self._read_json()
+        username = str(payload.get("username") or "")
+        password = str(payload.get("password") or "")
+        user = USERS.get(username)
+        if not user or user.get("password_hash") != _password_hash(password):
+            self._send_json({"error": "Invalid username or password"}, HTTPStatus.UNAUTHORIZED)
+            return
+        session = _create_session(username)
+        self._send_json({"token": session["token"], "user": session})
+
     def _handle_api_get(self, path: str) -> None:
         if path == "/api/health":
-            self._send_json({"status": "ok"})
+            self._send_json({"status": "ok", "storage": str(STATE_FILE)})
+            return
+        if path == "/api/auth/me":
+            session = self._current_session()
+            if not session:
+                self._send_json({"authenticated": False})
+                return
+            self._send_json({"authenticated": True, "user": session})
             return
         if path == "/api/settings":
             self._send_json(
@@ -422,6 +731,7 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
                     "api_base_url": "/api",
                     "default_base_url": SETTINGS["default_base_url"],
                     "default_project_path": SETTINGS["default_project_path"],
+                    "storage": str(STATE_FILE),
                     "ai_key_configured": any(
                         os.getenv(name) for name in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY")
                     ),
@@ -436,6 +746,10 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         if path == "/api/reports":
             with TASK_LOCK:
                 reports = _task_reports()
+            query = parse_qs(urlparse(self.path).query)
+            risk_filter = (query.get("risk") or [""])[0]
+            if risk_filter:
+                reports = [report for report in reports if report.get("risk", {}).get("overall_risk") == risk_filter]
             self._send_json({"reports": reports})
             return
         if path == "/api/assets":
@@ -481,7 +795,8 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         with TASK_LOCK:
             task = TASKS.get(task_id)
             result = task.get("result") if task else None
-        if task is None or result is None:
+            deleted = REPORT_META.get(task_id, {}).get("deleted")
+        if task is None or result is None or deleted:
             self._send_json({"error": "Report not found"}, HTTPStatus.NOT_FOUND)
             return
         if report_type == "html":
@@ -501,14 +816,132 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
             return
         SETTINGS["default_base_url"] = base_url
         SETTINGS["default_project_path"] = project_path
+        _persist_state()
         self._send_json(
             {
                 "api_base_url": "/api",
                 "default_base_url": SETTINGS["default_base_url"],
                 "default_project_path": SETTINGS["default_project_path"],
-                "storage": "memory",
+                "storage": str(STATE_FILE),
             }
         )
+
+    def _handle_task_rerun(self, path: str) -> None:
+        task_id = path.strip("/").split("/")[2]
+        with TASK_LOCK:
+            task = TASKS.get(task_id)
+            target = dict(task.get("target") or {}) if task else None
+        if not target:
+            self._send_json({"error": "Task not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json(start_scan(target), HTTPStatus.ACCEPTED)
+
+    def _handle_task_cancel(self, path: str) -> None:
+        task_id = path.strip("/").split("/")[2]
+        with TASK_LOCK:
+            task = TASKS.get(task_id)
+            if task and task.get("status") == "running":
+                task["cancel_requested"] = True
+                task["status"] = "cancelling"
+                task["current_step"] = "正在取消"
+                task.setdefault("events", []).append(_event("WARN", "用户请求取消扫描任务"))
+                _save_state_locked()
+        if not task:
+            self._send_json({"error": "Task not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json(_public_task(task))
+
+    def _handle_asset_create(self) -> None:
+        payload = self._read_json()
+        name = str(payload.get("name") or "").strip()
+        address = str(payload.get("address") or "").strip()
+        asset_type = str(payload.get("type") or "Web 应用").strip()
+        if not address:
+            self._send_json({"error": "address is required"}, HTTPStatus.BAD_REQUEST)
+            return
+        with TASK_LOCK:
+            asset = _upsert_asset(address, asset_type, name=name)
+            _save_state_locked()
+        self._send_json({"asset": asset}, HTTPStatus.CREATED)
+
+    def _handle_asset_update(self, path: str) -> None:
+        asset_id = path.strip("/").split("/")[2]
+        payload = self._read_json()
+        with TASK_LOCK:
+            asset = ASSETS.get(asset_id)
+            if asset:
+                for key in ("name", "address", "type", "risk"):
+                    if key in payload and str(payload[key]).strip():
+                        asset[key] = str(payload[key]).strip()
+                asset["updated_at"] = _timestamp()
+                _save_state_locked()
+        if not asset:
+            self._send_json({"error": "Asset not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json({"asset": asset})
+
+    def _handle_asset_delete(self, path: str) -> None:
+        asset_id = path.strip("/").split("/")[2]
+        with TASK_LOCK:
+            asset = ASSETS.pop(asset_id, None)
+            if asset:
+                _save_state_locked()
+        if not asset:
+            self._send_json({"error": "Asset not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json({"id": asset_id, "deleted": True})
+
+    def _handle_asset_scan(self, path: str) -> None:
+        asset_id = path.strip("/").split("/")[2]
+        with TASK_LOCK:
+            asset = ASSETS.get(asset_id)
+        if not asset:
+            self._send_json({"error": "Asset not found"}, HTTPStatus.NOT_FOUND)
+            return
+        payload = {
+            "base_url": asset["address"] if asset.get("type") == "Web 应用" else SETTINGS["default_base_url"],
+            "project_path": asset["address"] if asset.get("type") == "Codebase" else SETTINGS["default_project_path"],
+        }
+        self._send_json(start_scan(payload), HTTPStatus.ACCEPTED)
+
+    def _handle_report_update(self, path: str) -> None:
+        parts = path.strip("/").split("/")
+        if len(parts) < 3:
+            self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        task_id = parts[2]
+        payload = self._read_json()
+        with TASK_LOCK:
+            task = TASKS.get(task_id)
+            if task:
+                meta = REPORT_META.setdefault(task_id, {})
+                if str(payload.get("name") or "").strip():
+                    meta["name"] = str(payload["name"]).strip()
+                meta["deleted"] = False
+                meta["updated_at"] = _timestamp()
+                _save_state_locked()
+        if not task:
+            self._send_json({"error": "Report not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json({"report": next((item for item in _task_reports() if item["task_id"] == task_id), None)})
+
+    def _handle_report_delete(self, path: str) -> None:
+        parts = path.strip("/").split("/")
+        if len(parts) < 3:
+            self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        task_id = parts[2]
+        with TASK_LOCK:
+            task = TASKS.get(task_id)
+            if task:
+                meta = REPORT_META.setdefault(task_id, {})
+                meta["deleted"] = True
+                meta["updated_at"] = _timestamp()
+                _save_state_locked()
+        if not task:
+            self._send_json({"error": "Report not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json({"task_id": task_id, "deleted": True})
 
     def _handle_ai_advice(self, path: str) -> None:
         payload = self._read_json()
@@ -520,8 +953,13 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         if task is None or vulnerability is None:
             self._send_json({"error": "Vulnerability not found"}, HTTPStatus.NOT_FOUND)
             return
-        advice = generate_ai_advice(vulnerability)
-        vulnerability["ai_advice"] = advice
+        manual_advice = str(payload.get("manual_advice") or "").strip()
+        advice = manual_advice or generate_ai_advice(vulnerability)
+        with TASK_LOCK:
+            vulnerability["ai_advice"] = advice
+            versions = task.setdefault("advice_versions", {}).setdefault(vuln_id, [])
+            versions.append({"advice": advice, "created_at": _timestamp(), "source": "manual" if manual_advice else "ai"})
+            _save_state_locked()
         self._send_json({"id": vuln_id, "ai_advice": advice})
 
     def _handle_vulnerability_status(self, path: str) -> None:
@@ -535,6 +973,7 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
             if task and vulnerability:
                 task.setdefault("vulnerability_status", {})[vuln_id] = status
                 vulnerability["status"] = status
+                _save_state_locked()
         if task is None or vulnerability is None:
             self._send_json({"error": "Vulnerability not found"}, HTTPStatus.NOT_FOUND)
             return
@@ -567,9 +1006,11 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
     load_env_file()
+    _load_state()
     server = ThreadingHTTPServer((host, port), ScannerApiHandler)
     print(f"Scanner console running at http://{host}:{port}/")
     print(f"API health check: http://{host}:{port}/api/health")
+    print(f"State file: {STATE_FILE}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

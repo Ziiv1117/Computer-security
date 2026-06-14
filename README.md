@@ -99,16 +99,46 @@ http://127.0.0.1:8000/
 
 ```text
 GET  /api/health
+POST /api/auth/login
+GET  /api/auth/me
 POST /api/scan/start
 GET  /api/scan/status/{task_id}
 GET  /api/scan/result/{task_id}
+POST /api/tasks/{task_id}/rerun
+POST /api/tasks/{task_id}/cancel
+GET  /api/assets
+POST /api/assets
+PATCH /api/assets/{asset_id}
+DELETE /api/assets/{asset_id}
+POST /api/assets/{asset_id}/scan
+GET  /api/reports
 GET  /api/report/{task_id}/html
 GET  /api/report/{task_id}/markdown
+PATCH /api/report/{task_id}
+DELETE /api/report/{task_id}
 POST /api/vulnerability/{vuln_id}/ai-advice
 PATCH /api/vulnerability/{vuln_id}/status
 ```
 
 前端点击“开始扫描”后，会调用 `/api/scan/start` 创建任务，轮询 `/api/scan/status/{task_id}`，完成后读取 `/api/scan/result/{task_id}` 并渲染真实扫描结果。
+
+后端会把任务、扫描结果、报告内容、漏洞修复状态和系统设置持久化到：
+
+```text
+data/scanner_state.json
+```
+
+服务重启后会自动加载历史任务与最近报告。重启前仍在运行的任务会被标记为中断，避免前端一直显示运行中。
+
+当前分支还包含这些平台迭代能力：
+
+- DAST 会先做同源页面爬取，发现路由、表单和参数，再把发现结果用于登录、XSS、越权和敏感路由检测。
+- 扫描结果会按漏洞类型、位置、检测方式和证据生成指纹，合并重复项，并输出 `confidence` 置信度。
+- 资产库支持新增、编辑、删除，并可从资产发起扫描。
+- 任务调度支持历史持久化、重跑和取消运行中任务。
+- 报告中心支持重命名、删除、HTML 预览和 Markdown 打开。
+- AI 修复建议支持生成后人工编辑确认，并保存建议版本。
+- 后端写操作使用本地课程账号鉴权，默认账号为 `admin/admin123`。
 
 默认参数：
 

@@ -11,127 +11,44 @@ let statusPollTimer = null;
 let latestReports = {};
 let latestRisk = null;
 let backendConnected = false;
-let currentProgress = 67;
-let currentScanTitle = "扫描进行中";
-let currentScanSubtitle = "AI 引擎正在对目标进行深度安全检测，请稍候...";
+let currentProgress = 0;
+let currentScanTitle = "等待扫描";
+let currentScanSubtitle = "点击开始扫描后，会从后端同步真实扫描进度。";
+let displayedProgress = 0;
+let progressAnimationFrame = 0;
 let taskRecords = [];
 let reportRecords = [];
 let assetRecords = [];
+let authToken = window.localStorage.getItem("scannerAuthToken") || "";
+let currentUser = null;
 let currentScanPage = 1;
 let scanPageSize = 10;
 
 let modules = [
-  { name: "连接目标", state: "进行中" },
+  { name: "连接目标" },
   { name: "SQL 注入测试" },
   { name: "XSS 测试" },
   { name: "越权访问测试" },
-  { name: "弱密码分析" },
+  { name: "静态源码扫描" },
   { name: "AI 修复建议" },
+  { name: "生成报告" },
 ];
 
 let scanSteps = [
-  { name: "连接目标", time: "00:00:08", status: "done" },
-  { name: "SQL 注入测试", time: "00:02:15", status: "active" },
-  { name: "XSS 测试", time: "00:01:43", status: "done" },
-  { name: "越权访问测试", time: "00:01:29", status: "done" },
-  { name: "弱密码分析", time: "00:01:27", status: "done" },
+  { name: "连接目标", time: "等待中", status: "pending" },
+  { name: "SQL 注入测试", time: "等待中", status: "pending" },
+  { name: "XSS 测试", time: "等待中", status: "pending" },
+  { name: "越权访问测试", time: "等待中", status: "pending" },
+  { name: "静态源码扫描", time: "等待中", status: "pending" },
   { name: "AI 修复建议", time: "等待中", status: "pending" },
+  { name: "生成报告", time: "等待中", status: "pending" },
 ];
 
-const initialEvents = [
-  { time: "14:32:30", level: "INFO", text: "成功连接目标 https://target.example.com" },
-  { time: "14:32:31", level: "INFO", text: "目标响应正常，状态码：200" },
-  { time: "14:32:32", level: "INFO", text: "检测到 Web 服务器：Nginx/1.18.0" },
-  { time: "14:32:34", level: "INFO", text: "开始 SQL 注入测试模块" },
-  { time: "14:32:35", level: "INFO", text: "发现参数：id (GET)" },
-  { time: "14:32:36", level: "WARN", text: "参数 id 存在 SQL 注入风险" },
-  { time: "14:32:37", level: "RISK", text: "检测到 SQL 注入漏洞 (id)" },
-  { time: "14:32:38", level: "INFO", text: "尝试数据库类型：MySQL" },
-  { time: "14:32:39", level: "INFO", text: "尝试注入语句：UNION SELECT" },
-  { time: "14:32:41", level: "RISK", text: "确认存在 SQL 注入漏洞" },
-  { time: "14:32:42", level: "INFO", text: "扫描进度：SQL 注入测试 67%" },
-  { time: "14:32:44", level: "INFO", text: "正在分析响应内容..." },
-];
+const initialEvents = [];
 
-let events = [...initialEvents];
+let events = [];
 
-let vulnerabilities = [
-  {
-    id: "VULN-2024-0001",
-    type: "SQL Injection",
-    risk: "Critical",
-    location: "/login",
-    method: "DAST",
-    evidence: 2,
-    status: "未修复",
-    time: "14:32:37",
-    description:
-      "攻击者可通过构造恶意 SQL 语句绕过身份验证，读取、修改或删除数据库中的敏感数据。",
-    component: "web-app",
-    advice:
-      "建议将登录查询改为参数化查询或 ORM 绑定参数，禁止字符串拼接 SQL；同时统一登录失败提示，并为登录接口补充回归测试。",
-  },
-  {
-    id: "VULN-2024-0002",
-    type: "Cross-Site Scripting",
-    risk: "High",
-    location: "/comments",
-    method: "DAST",
-    evidence: 1,
-    status: "未修复",
-    time: "14:28:15",
-    description:
-      "评论内容未进行 HTML 转义，脚本标签可能被原样渲染并在浏览器中执行。",
-    component: "comments",
-    advice:
-      "建议在模板输出层默认开启 HTML 转义；如果允许富文本，使用白名单过滤库，并补充 Content-Security-Policy。",
-  },
-  {
-    id: "VULN-2024-0003",
-    type: "Broken Access Control",
-    risk: "High",
-    location: "/admin",
-    method: "DAST",
-    evidence: 3,
-    status: "未修复",
-    time: "14:25:48",
-    description:
-      "普通用户可访问管理员页面，说明敏感路由缺少服务端权限校验。",
-    component: "admin",
-    advice:
-      "建议在服务端为管理路由添加角色校验，所有敏感资源都要校验当前用户权限，不能只依赖前端隐藏入口。",
-  },
-  {
-    id: "VULN-2024-0004",
-    type: "Hardcoded Secret",
-    risk: "High",
-    location: "app.py:8",
-    method: "SAST",
-    evidence: 1,
-    status: "未修复",
-    time: "14:20:31",
-    description:
-      "源码中疑似包含硬编码密钥，代码泄露后可能导致凭据暴露。",
-    component: "source-code",
-    advice:
-      "建议将密钥迁移到环境变量或密钥管理服务，提交 `.env.example` 而不是 `.env`，并检查 Git 历史中是否泄露过真实凭据。",
-  },
-  {
-    id: "VULN-2024-0005",
-    type: "Weak Password Storage",
-    risk: "Medium",
-    location: "models.py:42",
-    method: "SAST",
-    evidence: 1,
-    status: "未修复",
-    time: "14:18:02",
-    description:
-      "系统疑似使用弱哈希或明文方式处理密码，泄露后容易被离线破解。",
-    component: "user-model",
-    advice:
-      "建议使用 bcrypt、argon2 或 werkzeug.security.generate_password_hash 存储密码，并为每个密码使用独立 salt。",
-  },
-];
+let vulnerabilities = [];
 
 let selectedVulnerabilityId = vulnerabilities[0]?.id ?? "";
 let currentFilter = "全部";
@@ -172,6 +89,7 @@ async function apiRequest(path, options = {}) {
   const response = await fetch(apiUrl(path), {
     headers: {
       "Content-Type": "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(options.headers || {}),
     },
     ...options,
@@ -205,6 +123,8 @@ function mapApiVulnerability(item) {
     method: item.method || "UNKNOWN",
     evidence: item.evidence_count ?? (item.evidence ? 1 : 0),
     evidenceText: item.evidence || "",
+    confidence: item.confidence || "Medium",
+    fingerprint: item.fingerprint || "",
     status: item.status || "未修复",
     time: discoveredAt.split(" ").pop() || currentTime(),
     discoveredAt: discoveredAt || `今天 ${currentTime()}`,
@@ -220,8 +140,38 @@ function statusLabel(status) {
     completed: "已完成",
     failed: "失败",
     pending: "等待中",
+    cancelling: "取消中",
+    cancelled: "已取消",
   };
   return labels[status] || status || "未知";
+}
+
+async function ensureAuthenticated() {
+  try {
+    const me = await apiRequest("/auth/me");
+    if (me.authenticated) {
+      currentUser = me.user;
+      return true;
+    }
+  } catch {
+    authToken = "";
+    window.localStorage.removeItem("scannerAuthToken");
+  }
+
+  try {
+    const session = await apiRequest("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username: "admin", password: "admin123" }),
+    });
+    authToken = session.token;
+    currentUser = session.user;
+    window.localStorage.setItem("scannerAuthToken", authToken);
+    addEvent("INFO", `已登录本地课程账号：${currentUser.display_name || currentUser.username}`);
+    return true;
+  } catch (error) {
+    addEvent("WARN", `本地登录失败，写操作将不可用：${error.message}`);
+    return false;
+  }
 }
 
 function safeRiskBadge(risk) {
@@ -302,19 +252,51 @@ function updateProgress(progress = 0, title = "等待扫描", subtitle = "启动
   currentProgress = value;
   currentScanTitle = title;
   currentScanSubtitle = subtitle;
-  const progressValue = document.querySelector("#progressValue");
-  if (progressValue) {
-    progressValue.innerHTML = `${value}<span>%</span>`;
-  }
-  document.querySelector(".radar")?.setAttribute("aria-label", `扫描进度 ${value}%`);
+  const radar = document.querySelector(".radar");
   const heading = document.querySelector(".scan-heading h1");
   const copy = document.querySelector(".scan-heading p");
+  radar?.classList.toggle("idle", value <= 0);
+  radar?.classList.toggle("running", value > 0 && value < 100);
+  radar?.classList.toggle("complete", value >= 100);
+  radar?.setAttribute("aria-label", `扫描进度 ${value}%`);
   if (heading) {
     heading.textContent = title;
   }
   if (copy) {
     copy.textContent = subtitle;
   }
+  animateProgressValue(value);
+}
+
+function animateProgressValue(target) {
+  const progressValue = document.querySelector("#progressValue");
+  const radar = document.querySelector(".radar");
+  if (!progressValue || !radar) {
+    displayedProgress = target;
+    return;
+  }
+  window.cancelAnimationFrame(progressAnimationFrame);
+  const start = displayedProgress;
+  const delta = target - start;
+  const duration = Math.min(1200, Math.max(360, Math.abs(delta) * 18));
+  const startedAt = performance.now();
+  const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+
+  function frame(now) {
+    const elapsed = Math.min(1, (now - startedAt) / duration);
+    displayedProgress = start + delta * easeOut(elapsed);
+    const rounded = Math.round(displayedProgress);
+    progressValue.innerHTML = `${rounded}<span>%</span>`;
+    radar.style.setProperty("--progress", `${rounded}%`);
+    if (elapsed < 1) {
+      progressAnimationFrame = window.requestAnimationFrame(frame);
+    } else {
+      displayedProgress = target;
+      progressValue.innerHTML = `${target}<span>%</span>`;
+      radar.style.setProperty("--progress", `${target}%`);
+    }
+  }
+  progressAnimationFrame = window.requestAnimationFrame(frame);
 }
 
 function renderAllScanData() {
@@ -325,6 +307,19 @@ function renderAllScanData() {
   renderSummary();
   renderRows();
   renderDetail();
+}
+
+function resetScanWorkspace() {
+  activeTaskId = "";
+  latestReports = {};
+  latestRisk = null;
+  currentScanPage = 1;
+  vulnerabilities = [];
+  selectedVulnerabilityId = "";
+  events = [];
+  modules = modules.map((module) => ({ name: module.name }));
+  scanSteps = scanSteps.map((step) => ({ name: step.name, time: "等待中", status: "pending" }));
+  updateProgress(0, "等待扫描", "点击开始扫描后，会从后端同步真实扫描进度。");
 }
 
 function syncStatus(status) {
@@ -345,6 +340,16 @@ function syncStatus(status) {
     ...module,
     state: module.name.includes(runningModule) || runningModule.includes(module.name) ? "进行中" : undefined,
   }));
+  modules = modules.map((module) => {
+    const matchedStep = scanSteps.find((step) => step.name.includes(module.name) || module.name.includes(step.name));
+    if (matchedStep?.status === "done") {
+      return { ...module, state: "已完成" };
+    }
+    if (matchedStep?.status === "active" || module.state === "进行中") {
+      return { ...module, state: "进行中" };
+    }
+    return { ...module, state: undefined };
+  });
   updateProgress(
     status.progress,
     status.status === "completed" ? "扫描完成" : "扫描进行中",
@@ -403,10 +408,10 @@ async function startBackendScan() {
   const button = document.querySelector("#startScanButton");
   button?.setAttribute("disabled", "true");
   try {
-    vulnerabilities = [];
-    selectedVulnerabilityId = "";
+    resetScanWorkspace();
     events = [{ time: currentTime(), level: "INFO", text: "正在向后端提交扫描任务" }];
     scanSteps = scanSteps.map((step) => ({ ...step, status: "pending", time: "等待中" }));
+    modules = modules.map((module) => ({ name: module.name }));
     updateProgress(3, "扫描准备中", "正在提交扫描任务。");
     renderAllScanData();
 
@@ -449,13 +454,17 @@ async function loadBackendSettings() {
     };
     addEvent("INFO", `已连接后端 API：${settings.api_base_url || API_BASE}`);
     await loadPlatformData();
-    const completedTask = taskRecords.find((task) => task.status === "completed");
-    if (completedTask && !activeTaskId) {
-      activeTaskId = completedTask.task_id;
-      await fetchScanResult();
+    const latestBackendTask = taskRecords[0];
+    if (latestBackendTask && !activeTaskId) {
+      activeTaskId = latestBackendTask.task_id;
+      syncStatus(latestBackendTask);
+      if (latestBackendTask.status === "completed") {
+        await fetchScanResult();
+      } else if (latestBackendTask.status === "running" || latestBackendTask.status === "cancelling") {
+        statusPollTimer = window.setInterval(pollScanStatus, 1500);
+      }
     } else if (!activeTaskId) {
-      vulnerabilities = [];
-      selectedVulnerabilityId = "";
+      resetScanWorkspace();
       renderAllScanData();
     }
     renderTargetInfo();
@@ -519,13 +528,16 @@ function renderModules() {
   }
   list.innerHTML = modules
     .map(
-      (item) => `
-        <li>
+      (item) => {
+        const stateClass = item.state === "已完成" ? "done" : item.state === "进行中" ? "running-state" : "pending";
+        return `
+        <li class="${stateClass}">
           <span class="check-dot"></span>
           <span>${item.name}</span>
           ${item.state ? `<span class="running">${item.state}</span>` : ""}
         </li>
-      `,
+      `;
+      },
     )
     .join("");
 }
@@ -554,7 +566,7 @@ function renderEvents() {
     return;
   }
   if (!events.length) {
-    list.innerHTML = `<div class="empty-state">事件流已清空，点击“刷新”可重新拉取模拟扫描状态。</div>`;
+    list.innerHTML = `<div class="empty-state">暂无扫描事件。启动一次后端扫描后，这里会显示真实事件流。</div>`;
     return;
   }
 
@@ -783,6 +795,7 @@ function renderDetail() {
         <div><dt>位置</dt><dd>${escapeHtml(item.location)}</dd></div>
         <div><dt>检测方式</dt><dd><span class="method">${escapeHtml(item.method)}</span></dd></div>
         <div><dt>风险等级</dt><dd><span class="badge ${riskClass(item.risk)}">${escapeHtml(item.risk)}</span></dd></div>
+        <div><dt>置信度</dt><dd>${escapeHtml(item.confidence || "Medium")}</dd></div>
         <div><dt>首次发现</dt><dd>${escapeHtml(item.discoveredAt || item.time)}</dd></div>
         <div><dt>最后更新</dt><dd>${escapeHtml(item.discoveredAt || item.time)}</dd></div>
       </dl>
@@ -798,6 +811,7 @@ function renderDetail() {
       <dl class="detail-list">
         <div><dt>组件</dt><dd>${escapeHtml(item.component)}</dd></div>
         <div><dt>证据数量</dt><dd>${escapeHtml(item.evidence)}</dd></div>
+        <div><dt>指纹</dt><dd>${escapeHtml(item.fingerprint || "-")}</dd></div>
         <div><dt>状态</dt><dd><span class="${item.status === "已修复" ? "status-fixed" : "status-unfixed"}">● ${escapeHtml(item.status)}</span></dd></div>
       </dl>
     </section>
@@ -855,10 +869,14 @@ async function showAdviceModal() {
   addEvent("INFO", `已为 ${item.id} 生成 AI 修复建议`);
   showModal(
     "AI 修复建议",
-    `<p class="modal-copy">${escapeHtml(item.advice)}</p>
+    `<textarea id="manualAdviceInput" class="modal-copy" rows="7">${escapeHtml(item.advice)}</textarea>
     <div class="code-suggestion">
       <strong>建议优先级</strong>
       <span>${escapeHtml(item.risk === "Critical" ? "立即修复" : "本轮迭代修复")}</span>
+    </div>
+    <div class="modal-actions">
+      <button data-modal-action="confirm-advice">确认当前建议</button>
+      <button data-modal-action="export">导出报告</button>
     </div>`,
   );
   showToast("AI 修复建议已生成");
@@ -937,8 +955,32 @@ function runDetailAction(action) {
     advice: showAdviceModal,
     export: exportReport,
     fixed: markSelectedAsFixed,
+    "confirm-advice": confirmAdviceVersion,
   };
   actions[action]?.();
+}
+
+async function confirmAdviceVersion() {
+  const item = selectedItem();
+  const advice = document.querySelector("#manualAdviceInput")?.value.trim();
+  if (!item || !advice) {
+    showToast("当前没有可确认的建议");
+    return;
+  }
+  item.advice = advice;
+  if (activeTaskId) {
+    try {
+      await apiRequest(`/vulnerability/${item.id}/ai-advice`, {
+        method: "POST",
+        body: JSON.stringify({ task_id: activeTaskId, manual_advice: advice }),
+      });
+    } catch (error) {
+      addEvent("WARN", `建议版本保存失败，仅更新前端：${error.message}`);
+    }
+  }
+  closeModal();
+  renderDetail();
+  showToast("修复建议已确认");
 }
 
 function bindScanPageControls() {
@@ -975,10 +1017,9 @@ function bindScanPageControls() {
     if (activeTaskId) {
       await pollScanStatus();
     } else {
-      if (!events.length) {
-        events = [...initialEvents];
-      }
-      addEvent("INFO", backendConnected ? "已连接后端，等待启动扫描任务" : "已刷新前端演示状态");
+      resetScanWorkspace();
+      renderAllScanData();
+      addEvent("INFO", backendConnected ? "已连接后端，当前没有扫描任务" : "后端未连接，当前没有扫描任务");
     }
     showToast("扫描状态已刷新");
   });
@@ -1063,7 +1104,7 @@ function pageTemplate(page) {
     escapeHtml(item.type),
     escapeHtml(item.task_id || "-"),
     safeRiskBadge(item.risk),
-    escapeHtml(item.last_scan_at || "-"),
+    `${escapeHtml(item.last_scan_at || "-")}<br><button class="mini-text-button" data-asset-scan="${escapeHtml(item.id)}">扫描</button><button class="mini-text-button" data-asset-delete="${escapeHtml(item.id)}">删除</button>`,
   ]);
   const reportRows = reportRecords.map((item) => [
     escapeHtml(item.name),
@@ -1071,7 +1112,7 @@ function pageTemplate(page) {
     safeRiskBadge(item.risk?.overall_risk),
     "HTML / MD",
     escapeHtml(item.generated_at || "-"),
-    `<button class="mini-text-button" data-report-url="${escapeHtml(item.html_url)}">预览</button><button class="mini-text-button" data-report-url="${escapeHtml(item.markdown_url)}">下载 MD</button>`,
+    `<button class="mini-text-button" data-report-url="${escapeHtml(item.html_url)}">预览</button><button class="mini-text-button" data-report-url="${escapeHtml(item.markdown_url)}">下载 MD</button><button class="mini-text-button" data-report-rename="${escapeHtml(item.task_id)}">重命名</button><button class="mini-text-button" data-report-delete="${escapeHtml(item.task_id)}">删除</button>`,
   ]);
   const taskRows = taskRecords.map((item) => [
     escapeHtml(item.task_id),
@@ -1079,7 +1120,7 @@ function pageTemplate(page) {
     "Full",
     escapeHtml(item.created_at || "-"),
     statusLabel(item.status),
-    `${escapeHtml(item.progress ?? 0)}%`,
+    `${escapeHtml(item.progress ?? 0)}%<br><button class="mini-text-button" data-task-rerun="${escapeHtml(item.task_id)}">重跑</button><button class="mini-text-button" data-task-cancel="${escapeHtml(item.task_id)}">取消</button>`,
   ]);
   const currentTask = latestTask();
   const currentFixItem = selectedItem() || vulnerabilities[0] || null;
@@ -1180,7 +1221,7 @@ function pageTemplate(page) {
       ].join(""),
       body: featureTable(["任务 ID", "目标", "扫描模式", "创建时间", "状态", "进度"], taskRows),
       drawer:
-        "这里现在读取后端内存任务队列；周期任务、暂停/恢复和持久化历史仍属于后续平台能力。",
+        "这里现在读取后端本地持久化任务历史，支持重跑和取消运行中任务。",
     },
     settings: {
       title: "系统设置",
@@ -1196,12 +1237,12 @@ function pageTemplate(page) {
           <label>后端 API 地址<input value="${escapeHtml(API_BASE)}" disabled /></label>
           <label>默认目标地址<input id="settingsBaseUrl" value="${escapeHtml(scanTarget.base_url)}" /></label>
           <label>默认源码路径<input id="settingsProjectPath" value="${escapeHtml(scanTarget.project_path)}" /></label>
-          <label>任务存储方式<input value="内存任务队列" disabled /></label>
+          <label>任务存储方式<input value="本地 JSON 持久化" disabled /></label>
           <button type="button" class="drawer-action info" id="saveSettingsButton">应用到下一次扫描</button>
         </form>
       `,
       drawer:
-        "系统设置已简化为扫描联调配置。修改默认目标后会写入后端内存配置，并用于下一次扫描。",
+        "系统设置已简化为扫描联调配置。修改默认目标后会写入后端本地配置，并用于下一次扫描。",
     },
   };
 
@@ -1224,6 +1265,7 @@ async function renderFeaturePage(page) {
           <p>${template.subtitle}</p>
         </div>
         <div class="feature-actions">
+          ${page === "assets" ? `<button class="ghost-button" data-feature-action="add-asset">新增资产</button>` : ""}
           <button class="ghost-button" data-feature-action="refresh">刷新</button>
         </div>
       </div>
@@ -1268,6 +1310,35 @@ async function renderFeaturePage(page) {
 
   document.querySelectorAll("[data-feature-action]").forEach((button) => {
     button.addEventListener("click", async () => {
+      if (button.dataset.featureAction === "add-asset") {
+        showModal(
+          "新增资产",
+          `<form class="mock-form">
+            <label>资产名称<input id="assetNameInput" value="本地靶场" /></label>
+            <label>资产地址<input id="assetAddressInput" value="${escapeHtml(scanTarget.base_url)}" /></label>
+            <label>资产类型<select id="assetTypeInput"><option>Web 应用</option><option>Codebase</option></select></label>
+            <button type="button" id="saveAssetButton">保存资产</button>
+          </form>`,
+        );
+        document.querySelector("#saveAssetButton")?.addEventListener("click", async () => {
+          const name = document.querySelector("#assetNameInput")?.value.trim();
+          const address = document.querySelector("#assetAddressInput")?.value.trim();
+          const type = document.querySelector("#assetTypeInput")?.value;
+          if (!address) {
+            showToast("资产地址不能为空");
+            return;
+          }
+          await apiRequest("/assets", {
+            method: "POST",
+            body: JSON.stringify({ name, address, type }),
+          });
+          closeModal();
+          await loadPlatformData();
+          renderFeaturePage("assets");
+          showToast("资产已保存");
+        });
+        return;
+      }
       await loadPlatformData();
       renderFeaturePage(page);
       showToast(`${template.title}已刷新`);
@@ -1287,7 +1358,7 @@ async function renderFeaturePage(page) {
   });
 
   document.querySelectorAll(".feature-body button").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       if (button.dataset.fixVulnId || button.dataset.aiAction) {
         return;
       }
@@ -1295,6 +1366,56 @@ async function renderFeaturePage(page) {
       if (reportUrl) {
         window.open(apiUrl(reportUrl), "_blank", "noopener");
         showToast("已打开后端报告");
+        return;
+      }
+      if (button.dataset.assetScan) {
+        const data = await apiRequest(`/assets/${button.dataset.assetScan}/scan`, { method: "POST" });
+        activeTaskId = data.task_id;
+        await loadPlatformData();
+        showToast(`资产扫描已启动：${activeTaskId}`);
+        return;
+      }
+      if (button.dataset.assetDelete) {
+        await apiRequest(`/assets/${button.dataset.assetDelete}`, { method: "DELETE" });
+        await loadPlatformData();
+        renderFeaturePage(page);
+        showToast("资产已删除");
+        return;
+      }
+      if (button.dataset.taskRerun) {
+        const data = await apiRequest(`/tasks/${button.dataset.taskRerun}/rerun`, { method: "POST" });
+        activeTaskId = data.task_id;
+        await loadPlatformData();
+        renderFeaturePage(page);
+        showToast(`任务已重跑：${activeTaskId}`);
+        return;
+      }
+      if (button.dataset.taskCancel) {
+        await apiRequest(`/tasks/${button.dataset.taskCancel}/cancel`, { method: "POST" });
+        await loadPlatformData();
+        renderFeaturePage(page);
+        showToast("已请求取消任务");
+        return;
+      }
+      if (button.dataset.reportDelete) {
+        await apiRequest(`/report/${button.dataset.reportDelete}`, { method: "DELETE" });
+        await loadPlatformData();
+        renderFeaturePage(page);
+        showToast("报告已删除");
+        return;
+      }
+      if (button.dataset.reportRename) {
+        const current = reportRecords.find((item) => item.task_id === button.dataset.reportRename);
+        const name = window.prompt("输入新的报告名称", current?.name || "");
+        if (name?.trim()) {
+          await apiRequest(`/report/${button.dataset.reportRename}`, {
+            method: "PATCH",
+            body: JSON.stringify({ name: name.trim() }),
+          });
+          await loadPlatformData();
+          renderFeaturePage(page);
+          showToast("报告已重命名");
+        }
         return;
       }
       showToast(`${button.textContent.trim()}操作已触发`);
@@ -1448,6 +1569,7 @@ async function boot() {
   renderDetail();
   bindScanPageControls();
   bindChromeInteractions();
+  await ensureAuthenticated();
   await loadBackendSettings();
 
   const initialPage = location.hash.replace("#", "");
