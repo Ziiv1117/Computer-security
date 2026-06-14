@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 漏洞扫描器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">AI</div>
+          <span>AI 漏洞扫描器</span>
+        </div>
+        <nav class="topnav" aria-label="主导航">
+          <button class="topnav-item active">扫描管理</button>
+          <button class="topnav-item">漏洞管理</button>
+          <button class="topnav-item">资产管理</button>
+          <button class="topnav-item">报告中心</button>
+          <button class="topnav-item">AI 修复</button>
+          <button class="topnav-item">系统设置</button>
+        </nav>
+        <div class="top-actions">
+          <button class="icon-button" data-action="notifications" aria-label="通知">
+            <span class="notification-dot">12</span>
+            <span>!</span>
+          </button>
+          <button class="icon-button" data-action="help" aria-label="帮助">?</button>
+          <button class="icon-button" data-action="settings" aria-label="设置">⚙</button>
+          <div class="user-pill">
+            <span>A</span>
+            <strong>Admin</strong>
+          </div>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <nav class="side-menu" aria-label="侧边导航">
+          <button class="side-item active" data-page="scan"><span class="side-icon">S</span>扫描管理</button>
+          <button class="side-item" data-page="vulnerabilities"><span class="side-icon">V</span>漏洞管理</button>
+          <button class="side-item" data-page="assets"><span class="side-icon">A</span>资产管理</button>
+          <button class="side-item" data-page="reports"><span class="side-icon">R</span>报告中心</button>
+          <button class="side-item" data-page="ai-fix"><span class="side-icon">F</span>AI 修复</button>
+          <button class="side-item" data-page="schedule"><span class="side-icon">T</span>任务调度</button>
+          <button class="side-item" data-page="plugins"><span class="side-icon">P</span>插件中心</button>
+          <button class="side-item" data-page="settings"><span class="side-icon">C</span>系统设置</button>
+        </nav>
+
+        <section class="status-panel">
+          <div class="panel-title-row">
+            <h2>系统状态</h2>
+            <span class="status-ok">正常</span>
+          </div>
+          <dl class="status-list">
+            <div><dt>AI 引擎</dt><dd>在线</dd></div>
+            <div><dt>扫描引擎</dt><dd>运行中</dd></div>
+            <div><dt>插件库版本</dt><dd>v2.3.1</dd></div>
+            <div><dt>规则库版本</dt><dd>v2024.05.24</dd></div>
+            <div><dt>漏洞库更新</dt><dd>2 分钟前</dd></div>
+            <div><dt>队列任务</dt><dd>1</dd></div>
+          </dl>
+          <div class="meter">
+            <span>CPU 使用率</span>
+            <strong>23%</strong>
+            <i style="--value: 23%"></i>
+          </div>
+          <div class="meter">
+            <span>内存使用率</span>
+            <strong>48%</strong>
+            <i style="--value: 48%"></i>
+          </div>
+          <div class="meter">
+            <span>磁盘使用率</span>
+            <strong>37%</strong>
+            <i style="--value: 37%"></i>
+          </div>
+        </section>
+
+        <p class="version">© 2024 AI Scanner v2.3.1</p>
+      </aside>
+
+      <main class="workspace">
+        <section class="scan-target panel">
+          <div class="panel-title-row">
+            <h2>扫描目标</h2>
+            <button class="ghost-button" id="editTargetButton">编辑</button>
+          </div>
+          <dl class="target-list">
+            <div>
+              <dt>目标地址</dt>
+              <dd class="accent-text">https://target.example.com</dd>
+            </div>
+            <div>
+              <dt>扫描类型</dt>
+              <dd>深度扫描 (DAST + SAST)</dd>
+            </div>
+            <div>
+              <dt>开始时间</dt>
+              <dd>2024-06-01 14:30:15</dd>
+            </div>
+            <div>
+              <dt>预计耗时</dt>
+              <dd>00:08:45</dd>
+            </div>
+          </dl>
+
+          <div class="module-card">
+            <div class="panel-title-row">
+              <h3>扫描模块</h3>
+              <span class="accent-text">6 / 6</span>
+            </div>
+            <ul class="module-list" id="moduleList"></ul>
+          </div>
+        </section>
+
+        <section class="radar-panel panel">
+          <div class="scan-heading">
+            <h1>扫描进行中</h1>
+            <p>AI 引擎正在对目标进行深度安全检测，请稍候...</p>
+          </div>
+          <div class="radar-wrap">
+            <div class="radar" aria-label="扫描进度 67%">
+              <div class="radar-core">
+                <strong id="progressValue">67<span>%</span></strong>
+                <small>扫描进度</small>
+              </div>
+            </div>
+          </div>
+          <ol class="scan-steps" id="scanSteps"></ol>
+        </section>
+
+        <section class="event-panel panel">
+          <div class="panel-title-row">
+            <h2>实时事件流</h2>
+            <button class="ghost-button" id="clearEventsButton">清空</button>
+          </div>
+          <div class="event-list" id="eventList"></div>
+        </section>
+
+        <section class="table-panel panel">
+          <div class="summary-grid" id="summaryGrid"></div>
+          <div class="table-toolbar">
+            <div class="toolbar-left">
+              <button class="filter-button active" data-filter="全部">全部</button>
+              <button class="filter-button" data-filter="DAST">DAST</button>
+              <button class="filter-button" data-filter="SAST">SAST</button>
+            </div>
+            <div class="toolbar-right">
+              <select id="statusFilter" aria-label="状态筛选">
+                <option>全部状态</option>
+                <option>未修复</option>
+                <option>已修复</option>
+              </select>
+              <button class="ghost-button" id="refreshButton">刷新</button>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th><input type="checkbox" aria-label="全选" /></th>
+                  <th>编号</th>
+                  <th>漏洞类型</th>
+                  <th>风险等级</th>
+                  <th>位置</th>
+                  <th>检测方式</th>
+                  <th>证据</th>
+                  <th>状态</th>
+                  <th>发现时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="vulnerabilityRows"></tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <span>共 5 条</span>
+            <div>
+              <button class="page-button" data-action="prev-page">‹</button>
+              <button class="page-button active">1</button>
+              <button class="page-button" data-action="next-page">›</button>
+              <select aria-label="每页条数">
+                <option>10 条 / 页</option>
+              </select>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="detail-drawer">
+        <div class="drawer-header">
+          <h2>漏洞详情</h2>
+          <button class="icon-button" id="closeDrawerButton" aria-label="关闭">×</button>
+        </div>
+        <div id="detailContent"></div>
+      </aside>
+    </div>
+
+    <div class="toast-area" id="toastArea" aria-live="polite"></div>
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-header">
+          <h2 id="modalTitle">提示</h2>
+          <button class="icon-button" id="modalCloseButton" aria-label="关闭弹窗">×</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

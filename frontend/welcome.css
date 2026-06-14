@@ -1,0 +1,284 @@
+:root {
+  --bg: #020604;
+  --green: #00b765;
+  --green-soft: rgba(0, 183, 101, 0.18);
+  --green-dim: #3f9468;
+  --text: #dff5e8;
+  --muted: #789b86;
+  --panel: rgba(2, 12, 8, 0.78);
+  --border: rgba(0, 183, 101, 0.28);
+  font-family:
+    "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei", monospace;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg);
+}
+
+#matrixCanvas,
+.noise-layer {
+  position: fixed;
+  inset: 0;
+}
+
+#matrixCanvas {
+  z-index: 0;
+}
+
+.noise-layer {
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(0, 183, 101, 0.11), transparent 34%),
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: auto, 100% 4px;
+  mix-blend-mode: screen;
+}
+
+.boot-shell {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 40px;
+}
+
+.boot-panel {
+  width: min(610px, 92vw);
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(0, 183, 101, 0.07), rgba(0, 183, 101, 0.018)),
+    var(--panel);
+  box-shadow:
+    0 0 58px rgba(0, 183, 101, 0.16),
+    inset 0 0 36px rgba(0, 183, 101, 0.045);
+  backdrop-filter: blur(12px);
+}
+
+.brand-mark {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  border: 1px solid rgba(0, 183, 101, 0.55);
+  border-radius: 16px;
+  color: var(--green);
+  font-weight: 900;
+  background: rgba(0, 183, 101, 0.08);
+  box-shadow: 0 0 24px rgba(0, 183, 101, 0.24);
+}
+
+.eyebrow {
+  margin: 28px 0 10px;
+  color: var(--green);
+  font-size: 13px;
+  letter-spacing: 3px;
+}
+
+h1 {
+  margin: 0;
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  font-size: clamp(38px, 6vw, 58px);
+  line-height: 1.05;
+  text-shadow: 0 0 20px rgba(0, 183, 101, 0.36);
+}
+
+.subtitle {
+  margin: 14px 0 22px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.terminal {
+  overflow: hidden;
+  border: 1px solid rgba(0, 183, 101, 0.24);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.46);
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  gap: 8px;
+  border-bottom: 1px solid rgba(0, 183, 101, 0.14);
+  color: var(--muted);
+  background: rgba(0, 183, 101, 0.04);
+}
+
+.terminal-bar span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--green);
+  opacity: 0.7;
+}
+
+.terminal-bar strong {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.terminal-lines {
+  display: grid;
+  min-height: 104px;
+  align-content: start;
+  gap: 6px;
+  padding: 16px;
+  color: #9fdab9;
+  font-size: 13px;
+}
+
+.terminal-line {
+  opacity: 0;
+  transform: translateY(5px);
+  animation: lineIn 0.25s ease forwards;
+}
+
+.terminal-line::before {
+  color: var(--green);
+  content: "> ";
+}
+
+@keyframes lineIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.boot-progress {
+  display: grid;
+  grid-template-columns: 1fr 54px;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.progress-track {
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 183, 101, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.progress-track i {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #008f4f, #00b765);
+  box-shadow: 0 0 16px rgba(0, 183, 101, 0.42);
+  transition: width 0.35s ease;
+}
+
+.progress-track i.complete {
+  width: 100% !important;
+}
+
+#progressLabel {
+  color: var(--green);
+  text-align: right;
+}
+
+.boot-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.enter-button,
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 24px;
+  border-radius: 10px;
+  font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.enter-button {
+  color: #00170c;
+  border: 1px solid rgba(0, 183, 101, 0.8);
+  background: linear-gradient(180deg, #19c878, #008f4f);
+  box-shadow: 0 0 22px rgba(0, 183, 101, 0.24);
+}
+
+.enter-button.disabled {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+.ghost-button {
+  color: var(--green);
+  border: 1px solid rgba(0, 183, 101, 0.26);
+  background: rgba(0, 183, 101, 0.06);
+}
+
+.status-stack {
+  position: fixed;
+  right: 34px;
+  bottom: 34px;
+  display: grid;
+  gap: 10px;
+  z-index: 2;
+}
+
+.status-stack div {
+  display: flex;
+  justify-content: space-between;
+  width: 230px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 183, 101, 0.2);
+  border-radius: 10px;
+  background: rgba(0, 8, 5, 0.68);
+  backdrop-filter: blur(8px);
+}
+
+.status-stack span {
+  color: var(--muted);
+}
+
+.status-stack strong {
+  color: var(--green);
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .boot-shell {
+    padding: 20px;
+  }
+
+  .boot-panel {
+    padding: 28px;
+  }
+
+  .status-stack {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    margin-top: 24px;
+  }
+}

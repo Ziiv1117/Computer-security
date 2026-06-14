@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 漏洞扫描器 - 初始化</title>
+    <link rel="stylesheet" href="./welcome.css" />
+  </head>
+  <body>
+    <canvas id="matrixCanvas" aria-hidden="true"></canvas>
+    <div class="noise-layer" aria-hidden="true"></div>
+
+    <main class="boot-shell">
+      <section class="boot-panel">
+        <div class="brand-mark">AI</div>
+        <p class="eyebrow">SECURITY SCANNER BOOT SEQUENCE</p>
+        <h1>AI 漏洞扫描器</h1>
+        <p class="subtitle">安全控制台初始化中</p>
+
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span></span>
+            <span></span>
+            <span></span>
+            <strong>scanner@localhost:~</strong>
+          </div>
+          <div class="terminal-lines" id="terminalLines"></div>
+        </div>
+
+        <div class="boot-progress" aria-label="系统初始化进度">
+          <div class="progress-track">
+            <i id="progressBar"></i>
+          </div>
+          <span id="progressLabel">0%</span>
+        </div>
+
+        <div class="boot-actions">
+          <a class="enter-button disabled" id="enterButton" href="./index.html" aria-disabled="true">
+            进入控制台
+          </a>
+        </div>
+      </section>
+
+      <aside class="status-stack">
+        <div>
+          <span>DAST</span>
+          <strong>ONLINE</strong>
+        </div>
+        <div>
+          <span>SAST</span>
+          <strong>READY</strong>
+        </div>
+        <div>
+          <span>AI ADVISOR</span>
+          <strong>STANDBY</strong>
+        </div>
+      </aside>
+    </main>
+
+    <script src="./welcome.js"></script>
+  </body>
+</html>
