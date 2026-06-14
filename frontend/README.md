@@ -2,9 +2,23 @@
 
 ## 1. 当前工作内容
 
-本前端模块是 AI 漏洞扫描器的 Web 控制台原型，当前采用 **单页 mock 动态版** 实现。
+本前端模块是 AI 漏洞扫描器的 Web 控制台原型，当前采用 **单页动态控制台 + 本地 API 联调** 实现。
 
-当前目标不是只做一张静态 UI 图，而是先把前端页面结构、交互流程、数据展示方式和后端接口对接位置搭好。后续后端扫描 API 完成后，可以将 mock 数据替换成真实接口返回数据。
+当前目标不是只做一张静态 UI 图，而是把前端页面结构、交互流程、数据展示方式和后端扫描接口接起来。扫描管理、漏洞管理、资产管理、报告中心和任务调度页会优先读取本地后端 API。
+
+当前分支已经加入本地 API 对接层。运行项目根目录的：
+
+```powershell
+python serve_app.py
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:8000/
+```
+
+前端会优先调用后端 `/api` 接口启动扫描、轮询状态、加载结果和打开报告；如果后端未启动，则只有无法接入真实模型的展示模块保留本地兜底数据。
 
 当前前端目录：
 
@@ -251,44 +265,21 @@ AI 修复页面用于展示防御性修复建议。
 后续如果后端支持任务队列或定时扫描，可以直接接入。
 ```
 
-### 3.7 插件中心
+### 3.7 系统设置
 
-插件中心页面用于展示扫描能力模块。
-
-包含插件：
-
-```text
-SQL 注入检测
-XSS 检测
-越权访问检测
-硬编码密钥扫描
-弱密码存储扫描
-AI 修复建议
-```
-
-用途：
-
-```text
-虽然当前扫描规则写在 Python 模块中，但前端先将其抽象成可管理插件，方便展示系统扩展性。
-```
-
-### 3.8 系统设置
-
-系统设置页面用于配置前后端对接参数。
+系统设置页面只保留扫描联调需要的参数。
 
 包含内容：
 
 - 后端 API 地址
 - 默认目标 URL
 - 默认源码路径
-- 报告输出目录
-- AI Key 状态
-- 默认报告格式
+- 任务存储方式说明
 
 用途：
 
 ```text
-后续接真实后端时，可以从这里配置 API 地址和默认扫描参数。
+配置下一次扫描使用的默认目标，避免保留没有真实后端支撑的主题、插件、报告目录等设置。
 ```
 
 ## 4. 当前交互能力
@@ -303,7 +294,7 @@ AI 修复建议
 - 实时事件流可清空和刷新
 - 查看详情会弹窗
 - 生成修复建议会弹窗
-- 导出报告会下载 mock Markdown 文件
+- 导出报告会打开后端生成的 Markdown / HTML 报告
 - 标记为已修复会更新前端状态
 - 操作后会出现 toast 提示
 - 支持 hash 直接打开模块
@@ -317,22 +308,22 @@ index.html#assets
 index.html#reports
 index.html#ai-fix
 index.html#schedule
-index.html#plugins
 index.html#settings
 ```
 
 ## 5. 当前数据来源
 
-当前数据来自 `frontend/app.js` 中的 mock 数据。
+当前扫描主流程数据来自本地后端 API。
 
-主要 mock 数据包括：
+已经接入后端的数据包括：
 
-- `modules`
-- `scanSteps`
-- `initialEvents`
-- `vulnerabilities`
+- 扫描任务启动、状态和结果
+- 漏洞列表和漏洞状态
+- 后端生成的 Markdown / HTML 报告
+- 后端任务列表
+- 后端任务派生的资产列表
 
-后续接入后端接口时，主要替换这些数据来源即可。
+仍保留本地展示数据的部分主要是 AI 修复页中的代码对比示例、顶部通知数量和部分非核心说明文案。
 
 ## 6. 与后端现有代码的关系
 
@@ -686,42 +677,7 @@ GET /api/tasks
 任务调度页面。
 ```
 
-### 7.10 获取插件列表
-
-接口：
-
-```http
-GET /api/plugins
-```
-
-建议响应：
-
-```json
-{
-  "plugins": [
-    {
-      "id": "sql_injection",
-      "name": "SQL 注入检测",
-      "enabled": true,
-      "version": "1.0.0"
-    },
-    {
-      "id": "xss",
-      "name": "XSS 检测",
-      "enabled": true,
-      "version": "1.0.0"
-    }
-  ]
-}
-```
-
-前端用途：
-
-```text
-插件中心页面。
-```
-
-### 7.11 获取系统设置
+### 7.10 获取系统设置
 
 接口：
 
@@ -804,33 +760,20 @@ RISK
 ERROR
 ```
 
-## 9. 后续接入接口的前端改造点
+## 9. 后续接口完善点
 
-当前需要替换 mock 数据的位置主要在 `frontend/app.js`：
+当前扫描主流程、漏洞列表、资产列表、报告列表和任务列表已经接入本地 API。
+
+后续需要补强的接口主要是：
 
 ```text
-modules
-scanSteps
-initialEvents
-vulnerabilities
-pageTemplate()
+任务持久化
+登录权限
+平台级资产库
+设置保存
+更细粒度扫描进度
+AI Key 状态检测
 ```
-
-建议后续新增这些函数：
-
-```javascript
-async function startScan(payload) {}
-async function fetchScanStatus(taskId) {}
-async function fetchScanResult(taskId) {}
-async function fetchAssets() {}
-async function fetchReports() {}
-async function fetchTasks() {}
-async function fetchPlugins() {}
-async function fetchSettings() {}
-async function updateVulnerabilityStatus(vulnId, status) {}
-```
-
-然后把当前 mock 渲染逻辑替换成接口数据。
 
 ## 10. 当前完成度说明
 
@@ -840,19 +783,20 @@ async function updateVulnerabilityStatus(vulnId, status) {}
 初始化进入页完成
 页面结构完成
 视觉风格完成
-八个侧边栏模块页面完成
-mock 数据展示完成
+七个侧边栏模块页面完成
+核心页面本地 API 数据展示完成
 基础交互完成
-报告 mock 导出完成
+报告真实 API 打开完成
 后端接口对齐文档完成
+扫描管理、漏洞管理、资产管理、报告中心、任务调度已接本地 API
 ```
 
 当前未完成：
 
 ```text
-未接真实后端 API
-未接真实扫描任务
-未接真实报告文件
+真实后端 API 已有本地标准库版本，后续可替换为正式测试平台服务
+真实扫描任务已能通过本地 API 调用 run_full_security_scan
+真实报告文件已能通过本地 API 返回 HTML / Markdown 内容
 未接真实 AI API Key 状态
 未做登录权限系统
 ```
@@ -864,13 +808,13 @@ mock 数据展示完成
 后端同学接下来需要重点完成：
 
 ```text
-1. 将 run_full_security_scan 封装成 Web API
-2. 提供启动扫描接口
-3. 提供扫描状态接口
-4. 提供扫描结果接口
-5. 提供 HTML / Markdown 报告下载接口
-6. 提供 AI 修复建议接口
-7. 统一漏洞对象字段
+1. 将当前标准库 API 服务替换或并入正式测试平台后端
+2. 补充任务持久化，避免服务重启后丢失扫描历史
+3. 提供更细粒度的扫描进度事件
+4. 按团队统一协议继续稳定漏洞对象字段
+5. 将当前资产、报告、任务调度列表接口持久化并扩展为正式平台接口
+6. 接入真实 AI API Key 状态
+7. 增加登录权限系统
 ```
 
-前端后续只需要将 mock 数据替换为接口请求，即可完成前后端联调。
+前端核心扫描链路已经具备基础接口请求能力，后续主要是把登录权限、平台级资产库和持久化配置继续替换为正式接口数据。

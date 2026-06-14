@@ -247,6 +247,23 @@ button {
   gap: 12px;
 }
 
+.target-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.target-actions .drawer-action {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+}
+
+.target-actions button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 h1,
 h2,
 h3,
@@ -1067,6 +1084,41 @@ input[type="checkbox"] {
   line-height: 1.8;
 }
 
+.notification-list {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.notification-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.notification-item div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.notification-item strong {
+  color: var(--text);
+}
+
+.notification-item p {
+  margin: 6px 0;
+}
+
+.notification-item time {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 .modal-detail {
   display: grid;
   gap: 12px;
@@ -1255,47 +1307,14 @@ input[type="checkbox"] {
 
 .code-compare code {
   display: block;
-  overflow: hidden;
   color: #b9dcff;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
 }
 
-.plugin-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.plugin-card {
-  display: grid;
-  min-height: 142px;
-  gap: 12px;
-  padding: 18px;
-  border: 1px solid rgba(47, 140, 255, 0.25);
-  border-radius: 10px;
-  background:
-    radial-gradient(circle at 90% 0%, rgba(47, 140, 255, 0.12), transparent 38%),
-    rgba(255, 255, 255, 0.026);
-}
-
-.plugin-card strong {
-  color: #fff;
-  font-size: 16px;
-}
-
-.plugin-card span {
-  width: fit-content;
-  padding: 3px 9px;
-  border: 1px solid rgba(34, 209, 138, 0.36);
-  border-radius: 999px;
-  color: var(--success);
-  background: var(--success-soft);
-  font-size: 12px;
-}
-
-.plugin-card .ghost-button {
-  width: 90px;
+.ai-generate-button {
+  width: 100%;
+  margin-top: 16px;
 }
 
 .settings-grid {
@@ -1367,9 +1386,6 @@ input[type="checkbox"] {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .plugin-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 1440px) {

@@ -81,6 +81,35 @@ http://127.0.0.1:5001
 python run_scan.py
 ```
 
+## 启动前后端联调控制台
+
+当前分支已经提供本地 API + 静态前端服务：
+
+```powershell
+python serve_app.py
+```
+
+默认访问地址：
+
+```text
+http://127.0.0.1:8000/
+```
+
+该服务会直接托管 `frontend/` 页面，并提供这些接口：
+
+```text
+GET  /api/health
+POST /api/scan/start
+GET  /api/scan/status/{task_id}
+GET  /api/scan/result/{task_id}
+GET  /api/report/{task_id}/html
+GET  /api/report/{task_id}/markdown
+POST /api/vulnerability/{vuln_id}/ai-advice
+PATCH /api/vulnerability/{vuln_id}/status
+```
+
+前端点击“开始扫描”后，会调用 `/api/scan/start` 创建任务，轮询 `/api/scan/status/{task_id}`，完成后读取 `/api/scan/result/{task_id}` 并渲染真实扫描结果。
+
 默认参数：
 
 ```text

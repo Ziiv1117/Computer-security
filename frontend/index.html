@@ -27,7 +27,6 @@
             <span>!</span>
           </button>
           <button class="icon-button" data-action="help" aria-label="帮助">?</button>
-          <button class="icon-button" data-action="settings" aria-label="设置">⚙</button>
           <div class="user-pill">
             <span>A</span>
             <strong>Admin</strong>
@@ -43,38 +42,22 @@
           <button class="side-item" data-page="reports"><span class="side-icon">R</span>报告中心</button>
           <button class="side-item" data-page="ai-fix"><span class="side-icon">F</span>AI 修复</button>
           <button class="side-item" data-page="schedule"><span class="side-icon">T</span>任务调度</button>
-          <button class="side-item" data-page="plugins"><span class="side-icon">P</span>插件中心</button>
           <button class="side-item" data-page="settings"><span class="side-icon">C</span>系统设置</button>
         </nav>
 
         <section class="status-panel">
           <div class="panel-title-row">
             <h2>系统状态</h2>
-            <span class="status-ok">正常</span>
+            <span class="status-ok" id="backendStatusBadge">检测中</span>
           </div>
           <dl class="status-list">
-            <div><dt>AI 引擎</dt><dd>在线</dd></div>
-            <div><dt>扫描引擎</dt><dd>运行中</dd></div>
-            <div><dt>插件库版本</dt><dd>v2.3.1</dd></div>
-            <div><dt>规则库版本</dt><dd>v2024.05.24</dd></div>
-            <div><dt>漏洞库更新</dt><dd>2 分钟前</dd></div>
-            <div><dt>队列任务</dt><dd>1</dd></div>
+            <div><dt>后端 API</dt><dd id="backendApiState">检测中</dd></div>
+            <div><dt>任务数</dt><dd id="backendTaskCount">0</dd></div>
+            <div><dt>报告数</dt><dd id="backendReportCount">0</dd></div>
+            <div><dt>资产数</dt><dd id="backendAssetCount">0</dd></div>
+            <div><dt>最近任务</dt><dd id="backendLatestTask">-</dd></div>
+            <div><dt>最近风险</dt><dd id="backendLatestRisk">-</dd></div>
           </dl>
-          <div class="meter">
-            <span>CPU 使用率</span>
-            <strong>23%</strong>
-            <i style="--value: 23%"></i>
-          </div>
-          <div class="meter">
-            <span>内存使用率</span>
-            <strong>48%</strong>
-            <i style="--value: 48%"></i>
-          </div>
-          <div class="meter">
-            <span>磁盘使用率</span>
-            <strong>37%</strong>
-            <i style="--value: 37%"></i>
-          </div>
         </section>
 
         <p class="version">© 2024 AI Scanner v2.3.1</p>
@@ -84,24 +67,27 @@
         <section class="scan-target panel">
           <div class="panel-title-row">
             <h2>扫描目标</h2>
-            <button class="ghost-button" id="editTargetButton">编辑</button>
+            <div class="target-actions">
+              <button class="ghost-button" id="editTargetButton">编辑</button>
+              <button class="drawer-action info" id="startScanButton">开始扫描</button>
+            </div>
           </div>
           <dl class="target-list">
             <div>
               <dt>目标地址</dt>
-              <dd class="accent-text">https://target.example.com</dd>
+              <dd class="accent-text" id="targetBaseUrl">http://127.0.0.1:5001</dd>
             </div>
             <div>
               <dt>扫描类型</dt>
-              <dd>深度扫描 (DAST + SAST)</dd>
+              <dd id="targetScanType">深度扫描 (DAST + SAST)</dd>
             </div>
             <div>
               <dt>开始时间</dt>
-              <dd>2024-06-01 14:30:15</dd>
+              <dd id="targetStartTime">等待启动</dd>
             </div>
             <div>
               <dt>预计耗时</dt>
-              <dd>00:08:45</dd>
+              <dd id="targetDuration">按目标响应决定</dd>
             </div>
           </dl>
 
@@ -175,15 +161,8 @@
             </table>
           </div>
           <div class="pagination">
-            <span>共 5 条</span>
-            <div>
-              <button class="page-button" data-action="prev-page">‹</button>
-              <button class="page-button active">1</button>
-              <button class="page-button" data-action="next-page">›</button>
-              <select aria-label="每页条数">
-                <option>10 条 / 页</option>
-              </select>
-            </div>
+            <span id="vulnerabilityTotal">共 5 条</span>
+            <div id="vulnerabilityPagination"></div>
           </div>
         </section>
       </main>
