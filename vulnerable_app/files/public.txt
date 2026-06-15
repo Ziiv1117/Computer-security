@@ -1,0 +1,4 @@
+Public download file for the vulnerable lab.
+
+This file is safe to read. The /download route is intentionally implemented
+without path normalization so that scanners can test path traversal behavior.

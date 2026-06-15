@@ -1,0 +1,8 @@
+Advanced lab notes:
+
+- CSRF: /transfer
+- Path traversal: /download
+- SSRF: /fetch
+- Open redirect: /redirect
+- Mass assignment: /settings
+- Information disclosure: /debug/config

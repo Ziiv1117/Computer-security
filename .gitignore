@@ -5,4 +5,6 @@ security_report.md
 security_report.html
 test_security_report.md
 test_security_report.html
+vulnerable_app/*.db
+vulnerable_app/*.log
 

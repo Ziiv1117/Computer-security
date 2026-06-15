@@ -32,6 +32,14 @@ scanner/
 ├── risk_engine.py
 ├── ai_advisor.py
 └── report_generator.py
+frontend/
+├── welcome.html
+└── index.html
+vulnerable_app/
+├── app.py
+├── README.md
+└── VULNERABLE_APP_GUIDE.md
+serve_app.py
 run_scan.py
 .env.example
 ```
@@ -40,11 +48,12 @@ run_scan.py
 
 - Python 3.10+
 - requests
+- Flask
 
 安装依赖：
 
 ```powershell
-pip install requests
+pip install -r requirements.txt
 ```
 
 ## 配置 AI API Key
@@ -73,6 +82,19 @@ QWEN_API_KEY=your_qwen_api_key_here
 
 ```text
 http://127.0.0.1:5001
+```
+
+本仓库已经包含本地授权靶场：
+
+```powershell
+python .\vulnerable_app\app.py
+```
+
+靶场详细设计、测试账号和故意保留的漏洞见：
+
+```text
+vulnerable_app/README.md
+vulnerable_app/VULNERABLE_APP_GUIDE.md
 ```
 
 然后在项目根目录运行：
