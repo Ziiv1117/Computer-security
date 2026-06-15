@@ -145,6 +145,18 @@ let drawerOpen = true;
 let initialWorkspaceTemplate = "";
 
 const riskClass = (risk) => String(risk || "low").toLowerCase();
+const statusClass = (status) => {
+  if (status === "已修复") {
+    return "status-fixed";
+  }
+  if (status === "修复中") {
+    return "status-progress";
+  }
+  if (status === "已忽略" || status === "误报") {
+    return "status-muted";
+  }
+  return "status-unfixed";
+};
 const selectedItem = () =>
   vulnerabilities.find((vulnerability) => vulnerability.id === selectedVulnerabilityId) ??
   vulnerabilities[0] ??
@@ -217,6 +229,10 @@ function mapApiVulnerability(item) {
     component: item.component || "unknown",
     advice: item.ai_advice || item.suggestion || "建议根据漏洞证据定位代码路径并补充回归测试。",
     adviceSource: item.ai_advice_source || "unknown",
+    requestMethod: item.request_method || item.method || "UNKNOWN",
+    payload: item.payload || "",
+    scannerRule: item.scanner_rule || "",
+    remediationPriority: item.remediation_priority || "P3",
   };
 }
 
@@ -729,7 +745,7 @@ function renderRows() {
           <td>${escapeHtml(item.location)}</td>
           <td><span class="method">${escapeHtml(item.method)}</span></td>
           <td title="${escapeHtml(item.evidenceText || "")}">&lt;/&gt; ${escapeHtml(item.evidence)}</td>
-          <td><span class="${item.status === "已修复" ? "status-fixed" : "status-unfixed"}">● ${item.status}</span></td>
+          <td><span class="${statusClass(item.status)}">● ${item.status}</span></td>
           <td>${escapeHtml(item.time)}</td>
           <td>
             <span class="action-cell">
@@ -809,7 +825,7 @@ function renderDetail() {
         <span class="badge ${riskClass(item.risk)}">${escapeHtml(item.risk)}</span>
         <span class="muted-id">${escapeHtml(item.id)}</span>
         <h3>${escapeHtml(item.type)}</h3>
-        <p class="${item.status === "已修复" ? "status-fixed" : "status-line"}">● ${escapeHtml(item.status)}</p>
+        <p class="${statusClass(item.status)}">● ${escapeHtml(item.status)}</p>
       </div>
     </section>
 
@@ -818,7 +834,9 @@ function renderDetail() {
       <dl class="detail-list">
         <div><dt>位置</dt><dd>${escapeHtml(item.location)}</dd></div>
         <div><dt>检测方式</dt><dd><span class="method">${escapeHtml(item.method)}</span></dd></div>
+        <div><dt>请求方法</dt><dd>${escapeHtml(item.requestMethod || "-")}</dd></div>
         <div><dt>风险等级</dt><dd><span class="badge ${riskClass(item.risk)}">${escapeHtml(item.risk)}</span></dd></div>
+        <div><dt>修复优先级</dt><dd>${escapeHtml(item.remediationPriority || "P3")}</dd></div>
         <div><dt>首次发现</dt><dd>${escapeHtml(item.discoveredAt || item.time)}</dd></div>
         <div><dt>最后更新</dt><dd>${escapeHtml(item.discoveredAt || item.time)}</dd></div>
       </dl>
@@ -833,16 +851,27 @@ function renderDetail() {
       <h4>受影响组件</h4>
       <dl class="detail-list">
         <div><dt>组件</dt><dd>${escapeHtml(item.component)}</dd></div>
+        <div><dt>扫描规则</dt><dd>${escapeHtml(item.scannerRule || "-")}</dd></div>
         <div><dt>证据数量</dt><dd>${escapeHtml(item.evidence)}</dd></div>
-        <div><dt>状态</dt><dd><span class="${item.status === "已修复" ? "status-fixed" : "status-unfixed"}">● ${escapeHtml(item.status)}</span></dd></div>
+        <div><dt>状态</dt><dd><span class="${statusClass(item.status)}">● ${escapeHtml(item.status)}</span></dd></div>
       </dl>
     </section>
+
+    ${item.payload ? `
+    <section class="detail-card">
+      <h4>测试输入</h4>
+      <p class="detail-copy">${escapeHtml(item.payload)}</p>
+    </section>
+    ` : ""}
 
     <div class="drawer-actions">
       <button class="drawer-action primary" data-detail-action="view">查看详情</button>
       <button class="drawer-action warning" data-detail-action="advice">生成修复建议</button>
       <button class="drawer-action info" data-detail-action="export">导出报告</button>
-      <button class="drawer-action muted" data-detail-action="fixed">标记为已修复</button>
+      <button class="drawer-action muted" data-detail-action="status:修复中">修复中</button>
+      <button class="drawer-action muted" data-detail-action="status:已修复">已修复</button>
+      <button class="drawer-action muted" data-detail-action="status:已忽略">已忽略</button>
+      <button class="drawer-action muted" data-detail-action="status:误报">误报</button>
     </div>
   `;
 
@@ -864,9 +893,14 @@ function showVulnerabilityModal() {
       <div><dt>风险等级</dt><dd>${escapeHtml(item.risk)}</dd></div>
       <div><dt>检测位置</dt><dd>${escapeHtml(item.location)}</dd></div>
       <div><dt>检测方式</dt><dd>${escapeHtml(item.method)}</dd></div>
+      <div><dt>请求方法</dt><dd>${escapeHtml(item.requestMethod || "-")}</dd></div>
+      <div><dt>扫描规则</dt><dd>${escapeHtml(item.scannerRule || "-")}</dd></div>
+      <div><dt>修复优先级</dt><dd>${escapeHtml(item.remediationPriority || "P3")}</dd></div>
+      <div><dt>当前状态</dt><dd>${escapeHtml(item.status)}</dd></div>
       <div><dt>证据数量</dt><dd>${escapeHtml(item.evidence)}</dd></div>
     </dl>
     <p class="modal-copy">${escapeHtml(item.description)}</p>
+    ${item.payload ? `<div class="code-suggestion"><strong>测试输入</strong><span>${escapeHtml(item.payload)}</span></div>` : ""}
     ${item.evidenceText ? `<div class="code-suggestion"><strong>检测证据</strong><span>${escapeHtml(item.evidenceText)}</span></div>` : ""}`,
   );
 }
@@ -926,6 +960,10 @@ function exportReport() {
 - 风险等级：${item.risk}
 - 位置：${item.location}
 - 检测方式：${item.method}
+- 请求方法：${item.requestMethod || "-"}
+- 扫描规则：${item.scannerRule || "-"}
+- 测试输入：${item.payload || "-"}
+- 修复优先级：${item.remediationPriority || "P3"}
 - 状态：${item.status}
 
 ## 漏洞描述
@@ -933,6 +971,8 @@ function exportReport() {
 ${item.description}
 
 ## AI 修复建议
+
+建议来源：${item.adviceSource || "unknown"}
 
 ${item.advice}
 `;
@@ -948,7 +988,7 @@ ${item.advice}
   showToast("报告已导出为 Markdown 文件");
 }
 
-async function markSelectedAsFixed() {
+async function updateSelectedStatus(status) {
   const item = selectedItem();
   if (!item) {
     showToast("当前没有可标记的漏洞");
@@ -958,26 +998,29 @@ async function markSelectedAsFixed() {
     try {
       await apiRequest(`/vulnerability/${item.id}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ task_id: activeTaskId, status: "已修复" }),
+        body: JSON.stringify({ task_id: activeTaskId, status }),
       });
     } catch (error) {
       addEvent("WARN", `后端状态更新失败，仅更新前端状态：${error.message}`);
     }
   }
-  item.status = "已修复";
-  addEvent("INFO", `${item.id} 已标记为已修复`);
+  item.status = status;
+  addEvent("INFO", `${item.id} 状态已更新为 ${status}`);
   renderSummary();
   renderRows();
   renderDetail();
-  showToast(`${item.id} 已标记为已修复`);
+  showToast(`${item.id} 状态已更新为 ${status}`);
 }
 
 function runDetailAction(action) {
+  if (action?.startsWith("status:")) {
+    updateSelectedStatus(action.slice("status:".length));
+    return;
+  }
   const actions = {
     view: showVulnerabilityModal,
     advice: showAdviceModal,
     export: exportReport,
-    fixed: markSelectedAsFixed,
   };
   actions[action]?.();
 }
@@ -994,13 +1037,17 @@ function bindScanPageControls() {
       </form>`,
     );
     document.querySelector("#saveMockTarget")?.addEventListener("click", () => {
-      scanTarget = {
-        base_url: document.querySelector("#targetBaseUrlInput")?.value.trim() || defaultTarget.base_url,
-        project_path: document.querySelector("#targetProjectPathInput")?.value.trim() || defaultTarget.project_path,
-      };
-      renderTargetInfo();
-      closeModal();
-      showToast("扫描目标已保存");
+      const baseUrl = document.querySelector("#targetBaseUrlInput")?.value.trim() || defaultTarget.base_url;
+      const projectPath = document.querySelector("#targetProjectPathInput")?.value.trim() || defaultTarget.project_path;
+      saveBackendSettings(baseUrl, projectPath)
+        .catch(() => {
+          scanTarget = { base_url: baseUrl, project_path: projectPath };
+          renderTargetInfo();
+        })
+        .finally(() => {
+          closeModal();
+          showToast("扫描目标已保存");
+        });
     });
   });
 
@@ -1099,10 +1146,11 @@ function pageTemplate(page) {
     escapeHtml(item.id),
     `<button class="mini-text-button" data-view-fix-vuln-id="${escapeHtml(item.id)}">详情</button>`,
     escapeHtml(item.type),
+    escapeHtml(item.remediationPriority || "P3"),
     safeRiskBadge(item.risk),
     escapeHtml(item.location),
     `<span class="method">${escapeHtml(item.method)}</span>`,
-    `<span class="${item.status === "已修复" ? "status-fixed" : "status-unfixed"}">● ${item.status}</span>`,
+    `<span class="${statusClass(item.status)}">● ${item.status}</span>`,
   ]);
   const assetRows = assetRecords.map((item) => [
     escapeHtml(item.name),
@@ -1141,7 +1189,7 @@ function pageTemplate(page) {
         metricCard("高危漏洞", vulnerabilities.filter((item) => item.risk === "High").length, "high"),
         metricCard("待修复", vulnerabilities.filter((item) => item.status === "未修复").length, "medium"),
       ].join(""),
-      body: featureTable(["编号", "操作", "漏洞类型", "风险等级", "位置", "检测方式", "状态"], vulnerabilityRows, {
+      body: featureTable(["编号", "操作", "漏洞类型", "优先级", "风险等级", "位置", "检测方式", "状态"], vulnerabilityRows, {
         getRowId: (row) => row[0],
       }),
       drawer:
@@ -1192,7 +1240,7 @@ function pageTemplate(page) {
                 <button class="${item.id === currentFixItem?.id ? "active" : ""}" data-fix-vuln-id="${escapeHtml(item.id)}">
                   <span>${escapeHtml(item.id)}</span>
                   <strong>${escapeHtml(item.type)}</strong>
-                  <em>${escapeHtml(item.risk)}</em>
+                  <em>${escapeHtml(item.remediationPriority || item.risk)}</em>
                 </button>
               `).join("")}
             </div>
@@ -1205,6 +1253,14 @@ function pageTemplate(page) {
               <div>
                 <strong>检测证据</strong>
                 <code>${escapeHtml(currentFixItem?.evidenceText || currentFixItem?.description || "-")}</code>
+              </div>
+              <div>
+                <strong>扫描规则</strong>
+                <code>${escapeHtml(currentFixItem?.scannerRule || "-")}</code>
+              </div>
+              <div>
+                <strong>测试输入</strong>
+                <code>${escapeHtml(currentFixItem?.payload || "-")}</code>
               </div>
               <div>
                 <strong>影响位置</strong>
@@ -1406,7 +1462,6 @@ async function renderFeaturePage(page) {
         showToast("已打开后端报告");
         return;
       }
-      showToast(`${button.textContent.trim()}操作已触发`);
     });
   });
 

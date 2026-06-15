@@ -95,6 +95,10 @@ def test_hardcoded_secret(project_path: str) -> list[dict]:
                 "score": 80,
                 "location": location,
                 "method": "SAST",
+                "request_method": "SOURCE",
+                "payload": "secret pattern",
+                "scanner_rule": "sast.hardcoded_secret",
+                "remediation_priority": "P1",
                 "evidence": f"Potential hardcoded secret detected: {_redact(line.strip())}",
                 "suggestion": "Move secrets to environment variables and do not commit them to source code.",
             }
@@ -123,6 +127,10 @@ def test_weak_password_storage(project_path: str) -> list[dict]:
                 "score": 80,
                 "location": location,
                 "method": "SAST",
+                "request_method": "SOURCE",
+                "payload": "weak password storage pattern",
+                "scanner_rule": "sast.weak_password_storage",
+                "remediation_priority": "P1",
                 "evidence": "Weak password storage pattern detected.",
                 "suggestion": "Use bcrypt, argon2, or werkzeug.security.generate_password_hash.",
             }
@@ -131,12 +139,20 @@ def test_weak_password_storage(project_path: str) -> list[dict]:
     return vulnerabilities
 
 
-def run_static_scan(project_path: str) -> list[dict]:
+def run_static_scan(project_path: str, progress_callback=None) -> list[dict]:
     results: list[dict] = []
     for scanner in (test_hardcoded_secret, test_weak_password_storage):
         try:
-            results.extend(scanner(project_path))
+            if progress_callback:
+                progress_callback("INFO", f"开始静态规则：{scanner.__name__}")
+            found = scanner(project_path)
+            results.extend(found)
+            if progress_callback:
+                level = "RISK" if found else "INFO"
+                progress_callback(level, f"静态规则 {scanner.__name__} 完成，发现 {len(found)} 个问题")
         except Exception:
+            if progress_callback:
+                progress_callback("WARN", f"静态规则 {scanner.__name__} 执行失败，已跳过")
             continue
     return results
 

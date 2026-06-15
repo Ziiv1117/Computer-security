@@ -209,6 +209,16 @@ def _configured_ai_provider() -> str:
     return ""
 
 
+def _priority_from_risk(risk: str) -> str:
+    if risk == "Critical":
+        return "P0"
+    if risk == "High":
+        return "P1"
+    if risk == "Medium":
+        return "P2"
+    return "P3"
+
+
 def _component_from_location(location: str) -> str:
     if not location:
         return "unknown"
@@ -233,6 +243,10 @@ def _normalize_vulnerability(raw: dict[str, Any], index: int, discovered_at: str
         "score": int(raw.get("score") or 0),
         "location": location,
         "method": str(raw.get("method") or "UNKNOWN"),
+        "request_method": str(raw.get("request_method") or raw.get("method") or "UNKNOWN"),
+        "payload": str(raw.get("payload") or ""),
+        "scanner_rule": str(raw.get("scanner_rule") or ""),
+        "remediation_priority": str(raw.get("remediation_priority") or _priority_from_risk(str(raw.get("risk") or "Low"))),
         "evidence": evidence,
         "evidence_count": 1 if evidence else 0,
         "suggestion": str(raw.get("suggestion") or ""),
@@ -286,10 +300,45 @@ def _run_task(task_id: str) -> None:
             step_index=0,
             events=[_event("INFO", f"开始连接目标 {target['base_url']}")],
         )
+        progress_cursor = {"value": 12}
+
+        def progress_event(level: str, message: str) -> None:
+            if "静态" in message:
+                step_index = 4
+                current_step = "静态源码扫描"
+            elif "修复建议" in message:
+                step_index = 5
+                current_step = "AI 修复建议"
+            elif "报告" in message:
+                step_index = 6
+                current_step = "生成报告"
+            elif "sql_injection" in message:
+                step_index = 1
+                current_step = "SQL 注入测试"
+            elif "xss" in message:
+                step_index = 2
+                current_step = "XSS 测试"
+            elif "broken_access_control" in message or "access_control" in message:
+                step_index = 3
+                current_step = "越权访问测试"
+            else:
+                step_index = 1
+                current_step = "动态漏洞扫描"
+
+            progress_cursor["value"] = min(95, progress_cursor["value"] + 3)
+            _set_task_state(
+                task_id,
+                progress=progress_cursor["value"],
+                current_step=current_step,
+                step_index=step_index,
+                events=[_event(level, message)],
+            )
+
         _set_task_state(task_id, progress=25, current_step="动态漏洞扫描", step_index=1)
         scan_result = run_full_security_scan(
             base_url=target["base_url"],
             project_path=target["project_path"],
+            progress_callback=progress_event,
         )
 
         with TASK_LOCK:

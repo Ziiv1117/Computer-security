@@ -862,6 +862,14 @@ input[type="checkbox"] {
   color: var(--success);
 }
 
+.status-progress {
+  color: var(--medium);
+}
+
+.status-muted {
+  color: var(--muted);
+}
+
 .action-cell {
   display: flex;
   gap: 6px;

@@ -57,6 +57,10 @@ def test_sql_injection(base_url: str) -> list[dict]:
                     "score": 95,
                     "location": "/login",
                     "method": "DAST",
+                    "request_method": "POST",
+                    "payload": "admin' OR '1'='1' --",
+                    "scanner_rule": "dast.sql_injection.login_bypass",
+                    "remediation_priority": "P0",
                     "evidence": "SQL injection payload caused login bypass.",
                     "suggestion": "Use parameterized queries instead of string concatenation.",
                 }
@@ -91,6 +95,10 @@ def test_xss(base_url: str) -> list[dict]:
                     "score": 75,
                     "location": "/comments",
                     "method": "DAST",
+                    "request_method": "POST/GET",
+                    "payload": payload,
+                    "scanner_rule": "dast.xss.stored_comment",
+                    "remediation_priority": "P1",
                     "evidence": "Script tag was reflected without escaping.",
                     "suggestion": "Escape user input before rendering it into HTML.",
                 }
@@ -130,6 +138,10 @@ def test_broken_access_control(base_url: str) -> list[dict]:
                         "score": 90,
                         "location": "/admin",
                         "method": "DAST",
+                        "request_method": "GET",
+                        "payload": "user1 / 123456",
+                        "scanner_rule": "dast.access_control.admin_role",
+                        "remediation_priority": "P0",
                         "evidence": "Normal user can access admin page.",
                         "suggestion": "Add role-based access control and verify permissions on sensitive routes.",
                     }
@@ -149,6 +161,10 @@ def test_broken_access_control(base_url: str) -> list[dict]:
                         "score": 80,
                         "location": "/profile/2",
                         "method": "DAST",
+                        "request_method": "GET",
+                        "payload": "user1 session -> /profile/2",
+                        "scanner_rule": "dast.access_control.object_ownership",
+                        "remediation_priority": "P1",
                         "evidence": "Normal user can access another user's profile page.",
                         "suggestion": "Check object ownership before returning user-specific resources.",
                     }
@@ -205,6 +221,10 @@ def test_csrf(base_url: str) -> list[dict]:
                     "score": 75,
                     "location": "/transfer",
                     "method": "DAST",
+                    "request_method": "POST",
+                    "payload": "to_user=user2&amount=1",
+                    "scanner_rule": "dast.csrf.transfer_without_token",
+                    "remediation_priority": "P1",
                     "evidence": "Authenticated transfer form accepted a state-changing POST without a CSRF token.",
                     "suggestion": "Add CSRF tokens, SameSite cookies, and server-side validation for state-changing requests.",
                 }
@@ -235,6 +255,10 @@ def test_path_traversal(base_url: str) -> list[dict]:
                     "score": 80,
                     "location": "/download?file=../app.py",
                     "method": "DAST",
+                    "request_method": "GET",
+                    "payload": "../app.py",
+                    "scanner_rule": "dast.path_traversal.download_file",
+                    "remediation_priority": "P1",
                     "evidence": "Download endpoint returned content from a parent-directory source file.",
                     "suggestion": "Normalize paths and enforce that requested files stay inside an allowlisted directory.",
                 }
@@ -267,6 +291,10 @@ def test_ssrf(base_url: str) -> list[dict]:
                     "score": 85,
                     "location": "/fetch?url=http://127.0.0.1:5001/health",
                     "method": "DAST",
+                    "request_method": "GET",
+                    "payload": health_url,
+                    "scanner_rule": "dast.ssrf.localhost_fetch",
+                    "remediation_priority": "P0",
                     "evidence": "Server-side fetch endpoint retrieved a localhost URL supplied by the user.",
                     "suggestion": "Restrict outbound fetch targets with protocol, hostname, and IP range allowlists.",
                 }
@@ -298,6 +326,10 @@ def test_open_redirect(base_url: str) -> list[dict]:
                     "score": 60,
                     "location": "/redirect?next=https://example.com/security-lab",
                     "method": "DAST",
+                    "request_method": "GET",
+                    "payload": external_url,
+                    "scanner_rule": "dast.open_redirect.external_location",
+                    "remediation_priority": "P2",
                     "evidence": "Redirect endpoint accepted an absolute external URL from user input.",
                     "suggestion": "Only allow relative redirect paths or enforce a strict trusted-domain allowlist.",
                 }
@@ -344,6 +376,10 @@ def test_mass_assignment(base_url: str) -> list[dict]:
                     "score": 80,
                     "location": "/settings",
                     "method": "DAST",
+                    "request_method": "POST",
+                    "payload": "role=admin",
+                    "scanner_rule": "dast.mass_assignment.role_update",
+                    "remediation_priority": "P0",
                     "evidence": "Normal user submitted role=admin and gained access to the admin page.",
                     "suggestion": "Use explicit field allowlists and never accept privilege fields from user-controlled forms.",
                 }
@@ -370,6 +406,10 @@ def test_information_disclosure(base_url: str) -> list[dict]:
                     "score": 75,
                     "location": "/debug/config",
                     "method": "DAST",
+                    "request_method": "GET",
+                    "payload": "/debug/config",
+                    "scanner_rule": "dast.information_disclosure.debug_config",
+                    "remediation_priority": "P1",
                     "evidence": "Unauthenticated debug endpoint exposed configuration or user data fields.",
                     "suggestion": "Disable debug endpoints in production and require authorization for sensitive diagnostics.",
                 }
@@ -380,7 +420,7 @@ def test_information_disclosure(base_url: str) -> list[dict]:
     return vulnerabilities
 
 
-def run_dynamic_scan(base_url: str) -> list[dict]:
+def run_dynamic_scan(base_url: str, progress_callback=None) -> list[dict]:
     results: list[dict] = []
     scanners = (
         test_sql_injection,
@@ -395,8 +435,16 @@ def run_dynamic_scan(base_url: str) -> list[dict]:
     )
     for scanner in scanners:
         try:
-            results.extend(scanner(base_url))
+            if progress_callback:
+                progress_callback("INFO", f"开始动态规则：{scanner.__name__}")
+            found = scanner(base_url)
+            results.extend(found)
+            if progress_callback:
+                level = "RISK" if found else "INFO"
+                progress_callback(level, f"动态规则 {scanner.__name__} 完成，发现 {len(found)} 个问题")
         except Exception:
+            if progress_callback:
+                progress_callback("WARN", f"动态规则 {scanner.__name__} 执行失败，已跳过")
             continue
     return results
 
