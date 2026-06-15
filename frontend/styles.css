@@ -1329,13 +1329,24 @@ input[type="checkbox"] {
   color: var(--text-soft);
 }
 
-.settings-grid input {
+.settings-grid input,
+.settings-grid select {
   min-height: 42px;
   padding: 0 12px;
   color: var(--text);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.settings-grid select option {
+  color: #0f172a;
+}
+
+.ai-key-grid {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .settings-grid .drawer-action {

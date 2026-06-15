@@ -19,6 +19,11 @@ let reportRecords = [];
 let assetRecords = [];
 let currentScanPage = 1;
 let scanPageSize = 10;
+let aiSettings = {
+  key_configured: false,
+  provider: "",
+  runtime_provider: "",
+};
 
 let modules = [
   { name: "连接目标", state: "进行中" },
@@ -447,6 +452,11 @@ async function loadBackendSettings() {
       base_url: settings.default_base_url || scanTarget.base_url,
       project_path: settings.default_project_path || scanTarget.project_path,
     };
+    aiSettings = {
+      key_configured: Boolean(settings.ai_key_configured),
+      provider: settings.ai_provider || "",
+      runtime_provider: settings.runtime_ai_provider || "",
+    };
     addEvent("INFO", `已连接后端 API：${settings.api_base_url || API_BASE}`);
     await loadPlatformData();
     const completedTask = taskRecords.find((task) => task.status === "completed");
@@ -481,6 +491,23 @@ async function saveBackendSettings(baseUrl, projectPath) {
   renderTargetInfo();
   updateBackendStatusPanel();
   addEvent("INFO", `默认扫描目标已更新：${scanTarget.base_url}`);
+  return settings;
+}
+
+async function saveAiKey(provider, apiKey) {
+  const settings = await apiRequest("/settings/ai-key", {
+    method: "PATCH",
+    body: JSON.stringify({
+      provider,
+      api_key: apiKey,
+    }),
+  });
+  aiSettings = {
+    key_configured: Boolean(settings.ai_key_configured),
+    provider: settings.ai_provider || provider,
+    runtime_provider: settings.runtime_ai_provider || provider,
+  };
+  addEvent("INFO", `AI 修复建议已配置为 ${provider.toUpperCase()} 接口`);
   return settings;
 }
 
@@ -1184,12 +1211,12 @@ function pageTemplate(page) {
     },
     settings: {
       title: "系统设置",
-      subtitle: "只保留扫描联调需要的 API 地址和默认目标配置。",
+      subtitle: "配置扫描目标、源码路径和 AI 修复建议接口。",
       metrics: [
         metricCard("API 地址", backendConnected ? "已连接" : "未连接"),
         metricCard("任务数", taskRecords.length, "low"),
         metricCard("默认目标", scanTarget.base_url.replace(/^https?:\/\//, ""), "medium"),
-        metricCard("报告格式", "HTML/MD"),
+        metricCard("AI Key", aiSettings.key_configured ? "已配置" : "未配置", aiSettings.key_configured ? "low" : "high"),
       ].join(""),
       body: `
         <form class="settings-grid">
@@ -1199,9 +1226,21 @@ function pageTemplate(page) {
           <label>任务存储方式<input value="内存任务队列" disabled /></label>
           <button type="button" class="drawer-action info" id="saveSettingsButton">应用到下一次扫描</button>
         </form>
+        <form class="settings-grid ai-key-grid">
+          <label>大模型服务
+            <select id="settingsAiProvider">
+              <option value="qwen" ${aiSettings.provider === "qwen" || !aiSettings.provider ? "selected" : ""}>千问 Qwen</option>
+              <option value="deepseek" ${aiSettings.provider === "deepseek" ? "selected" : ""}>DeepSeek</option>
+              <option value="openai" ${aiSettings.provider === "openai" ? "selected" : ""}>OpenAI</option>
+            </select>
+          </label>
+          <label>API Key<input id="settingsAiKey" type="password" autocomplete="off" placeholder="${aiSettings.key_configured ? "已配置，重新输入可覆盖" : "输入 API Key 后保存"}" /></label>
+          <label>当前 AI 状态<input value="${aiSettings.key_configured ? `已配置 ${aiSettings.provider || "AI"} 密钥` : "未配置，使用本地模板兜底"}" disabled /></label>
+          <button type="button" class="drawer-action info" id="saveAiKeyButton">保存 AI Key</button>
+        </form>
       `,
       drawer:
-        "系统设置已简化为扫描联调配置。修改默认目标后会写入后端内存配置，并用于下一次扫描。",
+        "默认目标会写入后端内存配置，用于下一次扫描。API Key 只保存在当前后端进程中，重启后会失效；需要长期使用时可写入本地 .env。",
     },
   };
 
@@ -1261,6 +1300,27 @@ async function renderFeaturePage(page) {
       showToast("系统设置已保存到后端");
     } catch (error) {
       showToast(`系统设置保存失败：${error.message}`);
+    } finally {
+      button?.removeAttribute("disabled");
+    }
+  });
+
+  document.querySelector("#saveAiKeyButton")?.addEventListener("click", async () => {
+    const button = document.querySelector("#saveAiKeyButton");
+    const provider = document.querySelector("#settingsAiProvider")?.value || "qwen";
+    const apiKey = document.querySelector("#settingsAiKey")?.value.trim();
+    if (!apiKey) {
+      showToast("请输入 API Key");
+      return;
+    }
+    button?.setAttribute("disabled", "true");
+    try {
+      await saveAiKey(provider, apiKey);
+      await loadBackendSettings();
+      await renderFeaturePage("settings");
+      showToast("AI Key 已保存到后端进程");
+    } catch (error) {
+      showToast(`AI Key 保存失败：${error.message}`);
     } finally {
       button?.removeAttribute("disabled");
     }

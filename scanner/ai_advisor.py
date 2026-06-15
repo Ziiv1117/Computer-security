@@ -63,6 +63,22 @@ def _fallback_advice(vulnerability: dict) -> str:
 def _provider_config() -> tuple[str, str, str] | None:
     load_env_file()
 
+    selected_provider = os.getenv("AI_PROVIDER", "").strip().lower()
+    if selected_provider == "openai" and os.getenv("OPENAI_API_KEY"):
+        return ("https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
+    if selected_provider == "deepseek" and os.getenv("DEEPSEEK_API_KEY"):
+        return (
+            "https://api.deepseek.com/v1/chat/completions",
+            os.environ["DEEPSEEK_API_KEY"],
+            "deepseek-chat",
+        )
+    if selected_provider == "qwen" and os.getenv("QWEN_API_KEY"):
+        return (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            os.environ["QWEN_API_KEY"],
+            "qwen-plus",
+        )
+
     if os.getenv("OPENAI_API_KEY"):
         return ("https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
     if os.getenv("DEEPSEEK_API_KEY"):

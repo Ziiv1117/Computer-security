@@ -28,6 +28,7 @@ TASK_COUNTER = 0
 SETTINGS = {
     "default_base_url": DEFAULT_BASE_URL,
     "default_project_path": DEFAULT_PROJECT_PATH,
+    "runtime_ai_provider": "",
 }
 
 SCAN_STEPS = [
@@ -180,6 +181,26 @@ def _task_assets() -> list[dict[str, Any]]:
                 "task_id": task["task_id"],
             }
     return sorted(assets.values(), key=lambda item: item.get("last_scan_at") or "", reverse=True)
+
+
+def _configured_ai_provider() -> str:
+    selected_provider = os.getenv("AI_PROVIDER", "").strip().lower()
+    selected_env_names = {
+        "openai": "OPENAI_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "qwen": "QWEN_API_KEY",
+    }
+    if selected_provider in selected_env_names and os.getenv(selected_env_names[selected_provider]):
+        return selected_provider
+
+    for provider, env_name in (
+        ("openai", "OPENAI_API_KEY"),
+        ("deepseek", "DEEPSEEK_API_KEY"),
+        ("qwen", "QWEN_API_KEY"),
+    ):
+        if os.getenv(env_name):
+            return provider
+    return ""
 
 
 def _component_from_location(location: str) -> str:
@@ -380,6 +401,9 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/settings":
             self._handle_settings_update()
             return
+        if parsed.path == "/api/settings/ai-key":
+            self._handle_ai_key_update()
+            return
         if parsed.path.startswith("/api/vulnerability/") and parsed.path.endswith("/status"):
             self._handle_vulnerability_status(parsed.path)
             return
@@ -425,6 +449,8 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
                     "ai_key_configured": any(
                         os.getenv(name) for name in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY")
                     ),
+                    "ai_provider": _configured_ai_provider(),
+                    "runtime_ai_provider": SETTINGS.get("runtime_ai_provider", ""),
                 }
             )
             return
@@ -506,7 +532,39 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
                 "api_base_url": "/api",
                 "default_base_url": SETTINGS["default_base_url"],
                 "default_project_path": SETTINGS["default_project_path"],
+                "ai_key_configured": any(
+                    os.getenv(name) for name in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY")
+                ),
+                "ai_provider": _configured_ai_provider(),
                 "storage": "memory",
+            }
+        )
+
+    def _handle_ai_key_update(self) -> None:
+        payload = self._read_json()
+        provider = str(payload.get("provider") or "qwen").strip().lower()
+        api_key = str(payload.get("api_key") or "").strip()
+        key_names = {
+            "qwen": "QWEN_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+        }
+        env_name = key_names.get(provider)
+        if env_name is None:
+            self._send_json({"error": "Unsupported AI provider"}, HTTPStatus.BAD_REQUEST)
+            return
+        if not api_key:
+            self._send_json({"error": "API key is required"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        os.environ[env_name] = api_key
+        os.environ["AI_PROVIDER"] = provider
+        SETTINGS["runtime_ai_provider"] = provider
+        self._send_json(
+            {
+                "ai_key_configured": True,
+                "ai_provider": provider,
+                "runtime_ai_provider": provider,
             }
         )
 
