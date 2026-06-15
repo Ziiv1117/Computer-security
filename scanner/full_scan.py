@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
+import os
 
 from scanner.ai_advisor import generate_ai_advice_result
 from scanner.dynamic_scanner import run_dynamic_scan
@@ -45,6 +47,37 @@ def _deduplicate(vulnerabilities: list[dict]) -> list[dict]:
     return list(merged.values())
 
 
+def _generate_advice_batch(vulnerabilities: list[dict], errors: list[str], progress_callback=None) -> None:
+    if not vulnerabilities:
+        return
+
+    max_workers = max(1, min(int(os.getenv("AI_ADVICE_WORKERS", "4") or "4"), len(vulnerabilities)))
+
+    def build_advice(vulnerability: dict) -> tuple[dict, dict]:
+        if progress_callback:
+            progress_callback("INFO", f"生成修复建议：{vulnerability['id']} {vulnerability.get('type', '')}")
+        return vulnerability, generate_ai_advice_result(vulnerability)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(build_advice, vulnerability) for vulnerability in vulnerabilities]
+        for future in as_completed(futures):
+            vulnerability: dict | None = None
+            try:
+                vulnerability, advice_result = future.result()
+                vulnerability["ai_advice"] = advice_result["advice"]
+                vulnerability["ai_advice_source"] = advice_result["source"]
+                if advice_result.get("error"):
+                    errors.append(f"AI advice fallback for {vulnerability['id']}: {advice_result['error']}")
+            except Exception as exc:
+                vuln_id = vulnerability.get("id", "unknown") if vulnerability else "unknown"
+                errors.append(f"AI advice failed for {vuln_id}: {exc}")
+                if vulnerability is not None:
+                    vulnerability["ai_advice"] = vulnerability.get("suggestion", "")
+                    vulnerability["ai_advice_source"] = "fallback-error"
+                if progress_callback:
+                    progress_callback("WARN", f"{vuln_id} 修复建议生成失败，使用兜底建议")
+
+
 def run_full_security_scan(base_url: str, project_path: str, progress_callback=None) -> dict:
     errors: list[str] = []
     vulnerabilities: list[dict] = []
@@ -71,18 +104,8 @@ def run_full_security_scan(base_url: str, project_path: str, progress_callback=N
 
     for index, vulnerability in enumerate(vulnerabilities, start=1):
         vulnerability["id"] = f"VULN-{index:03d}"
-        try:
-            if progress_callback:
-                progress_callback("INFO", f"生成修复建议：{vulnerability['id']} {vulnerability.get('type', '')}")
-            advice_result = generate_ai_advice_result(vulnerability)
-            vulnerability["ai_advice"] = advice_result["advice"]
-            vulnerability["ai_advice_source"] = advice_result["source"]
-        except Exception as exc:
-            errors.append(f"AI advice failed for {vulnerability['id']}: {exc}")
-            vulnerability["ai_advice"] = vulnerability.get("suggestion", "")
-            vulnerability["ai_advice_source"] = "fallback-error"
-            if progress_callback:
-                progress_callback("WARN", f"{vulnerability['id']} 修复建议生成失败，使用兜底建议")
+
+    _generate_advice_batch(vulnerabilities, errors, progress_callback=progress_callback)
 
     risk = calculate_risk(vulnerabilities)
     scan_result = {

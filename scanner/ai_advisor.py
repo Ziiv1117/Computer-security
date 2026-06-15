@@ -9,18 +9,21 @@ import urllib.request
 
 
 PROMPT_TEMPLATE = """You are a defensive web security assistant.
-Given the following vulnerability detected in a local authorized lab project, explain:
-1. what the vulnerability means,
-2. why it is dangerous,
-3. how to fix it,
-4. give a short secure coding suggestion.
+Given the following vulnerability detected in a local authorized lab project, return one compact JSON object for a security report.
 Do not provide exploitation steps, attack chains, privilege escalation ideas, or new payloads.
 Do not quote or transform exploit payloads, even if the scanner provided them.
 Do not include examples of malicious input.
 Do not claim that a fix has been completed or verified unless the input explicitly says so.
 Do not expand beyond the sanitized evidence already provided by the scanner.
-Focus on defensive remediation, code changes, validation checks, and regression tests.
-Return the answer in Chinese for a course presentation and report.
+Use Chinese.
+Return valid JSON only, without markdown fences. The JSON schema is:
+{{
+  "summary": "one sentence explaining the issue",
+  "impact": ["2-3 concise defensive impact points"],
+  "fix_steps": ["3-5 concrete remediation steps"],
+  "validation": ["2-3 verification or regression test steps"],
+  "secure_coding": "one short secure coding rule"
+}}
 Vulnerability:
 {vulnerability}
 """
@@ -70,40 +73,43 @@ def _provider_config() -> tuple[str, str, str, str] | None:
     load_env_file()
 
     selected_provider = os.getenv("AI_PROVIDER", "").strip().lower()
+    qwen_model = os.getenv("QWEN_MODEL") or os.getenv("AI_MODEL") or "qwen3.6-flash"
+    openai_model = os.getenv("OPENAI_MODEL") or os.getenv("AI_MODEL") or "gpt-4o-mini"
+    deepseek_model = os.getenv("DEEPSEEK_MODEL") or os.getenv("AI_MODEL") or "deepseek-chat"
     if selected_provider == "openai" and os.getenv("OPENAI_API_KEY"):
-        return ("openai", "https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
+        return ("openai", "https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], openai_model)
     if selected_provider == "deepseek" and os.getenv("DEEPSEEK_API_KEY"):
         return (
             "deepseek",
             "https://api.deepseek.com/v1/chat/completions",
             os.environ["DEEPSEEK_API_KEY"],
-            "deepseek-chat",
+            deepseek_model,
         )
     if selected_provider == "qwen" and os.getenv("QWEN_API_KEY"):
         return (
             "qwen",
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
             os.environ["QWEN_API_KEY"],
-            "qwen-plus",
+            qwen_model,
         )
     if selected_provider in {"openai", "deepseek", "qwen"}:
         return None
 
     if os.getenv("OPENAI_API_KEY"):
-        return ("openai", "https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
+        return ("openai", "https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], openai_model)
     if os.getenv("DEEPSEEK_API_KEY"):
         return (
             "deepseek",
             "https://api.deepseek.com/v1/chat/completions",
             os.environ["DEEPSEEK_API_KEY"],
-            "deepseek-chat",
+            deepseek_model,
         )
     if os.getenv("QWEN_API_KEY"):
         return (
             "qwen",
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
             os.environ["QWEN_API_KEY"],
-            "qwen-plus",
+            qwen_model,
         )
     return None
 
@@ -145,6 +151,68 @@ def _sanitize_ai_advice(advice: str) -> str:
     return sanitized
 
 
+def _extract_json_object(text: str) -> dict | None:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            parsed = json.loads(stripped[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _as_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _format_advice_sections(raw_advice: str) -> str:
+    parsed = _extract_json_object(raw_advice)
+    if not parsed:
+        return _sanitize_ai_advice(raw_advice)
+
+    lines: list[str] = []
+    summary = str(parsed.get("summary") or "").strip()
+    if summary:
+        lines.extend(["### 漏洞说明", summary, ""])
+
+    impact = _as_list(parsed.get("impact"))
+    if impact:
+        lines.append("### 风险影响")
+        lines.extend(f"- {item}" for item in impact)
+        lines.append("")
+
+    fix_steps = _as_list(parsed.get("fix_steps"))
+    if fix_steps:
+        lines.append("### 修复步骤")
+        lines.extend(f"{index}. {item}" for index, item in enumerate(fix_steps, 1))
+        lines.append("")
+
+    validation = _as_list(parsed.get("validation"))
+    if validation:
+        lines.append("### 验证方式")
+        lines.extend(f"- {item}" for item in validation)
+        lines.append("")
+
+    secure_coding = str(parsed.get("secure_coding") or "").strip()
+    if secure_coding:
+        lines.extend(["### 安全编码建议", secure_coding])
+
+    return _sanitize_ai_advice("\n".join(lines).strip())
+
+
 def _call_ai_api(vulnerability: dict) -> tuple[str, str]:
     config = _provider_config()
     if config is None:
@@ -176,7 +244,7 @@ def _call_ai_api(vulnerability: dict) -> tuple[str, str]:
     with urllib.request.urlopen(request, timeout=20) as response:
         data = json.loads(response.read().decode("utf-8"))
 
-    return _sanitize_ai_advice(data["choices"][0]["message"]["content"].strip()), f"{provider}:{model}"
+    return _format_advice_sections(data["choices"][0]["message"]["content"].strip()), f"{provider}:{model}"
 
 
 def generate_ai_advice_result(vulnerability: dict) -> dict[str, str]:

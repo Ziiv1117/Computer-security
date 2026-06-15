@@ -24,6 +24,7 @@ let aiSettings = {
   key_configured: false,
   provider: "",
   runtime_provider: "",
+  model: "qwen3.6-flash",
 };
 
 let modules = [
@@ -405,6 +406,7 @@ async function loadBackendSettings() {
       key_configured: Boolean(settings.ai_key_configured),
       provider: settings.ai_provider || "",
       runtime_provider: settings.runtime_ai_provider || "",
+      model: settings.ai_model || "qwen3.6-flash",
     };
     addEvent("INFO", `已连接后端 API：${settings.api_base_url || API_BASE}`);
     await loadPlatformData();
@@ -447,20 +449,22 @@ async function saveBackendSettings(baseUrl, projectPath) {
   return settings;
 }
 
-async function saveAiKey(provider, apiKey) {
+async function saveAiKey(provider, apiKey, model) {
   const settings = await apiRequest("/settings/ai-key", {
     method: "PATCH",
     body: JSON.stringify({
       provider,
       api_key: apiKey,
+      model,
     }),
   });
   aiSettings = {
     key_configured: Boolean(settings.ai_key_configured),
     provider: settings.ai_provider || provider,
     runtime_provider: settings.runtime_ai_provider || provider,
+    model: settings.ai_model || model || "qwen3.6-flash",
   };
-  addEvent("INFO", `AI 修复建议已配置为 ${provider.toUpperCase()} 接口`);
+  addEvent("INFO", `AI 修复建议已配置为 ${provider.toUpperCase()} / ${aiSettings.model}`);
   return settings;
 }
 
@@ -1340,8 +1344,16 @@ function pageTemplate(page) {
               <option value="openai" ${aiSettings.provider === "openai" ? "selected" : ""}>OpenAI</option>
             </select>
           </label>
+          <label>模型
+            <select id="settingsAiModel">
+              <option value="qwen3.6-flash" ${aiSettings.model === "qwen3.6-flash" || !aiSettings.model ? "selected" : ""}>qwen3.6-flash（更快）</option>
+              <option value="qwen-turbo" ${aiSettings.model === "qwen-turbo" ? "selected" : ""}>qwen-turbo（轻量）</option>
+              <option value="qwen-plus" ${aiSettings.model === "qwen-plus" ? "selected" : ""}>qwen-plus（质量更高）</option>
+              <option value="qwen-max" ${aiSettings.model === "qwen-max" ? "selected" : ""}>qwen-max（更强更慢）</option>
+            </select>
+          </label>
           <label>API Key<input id="settingsAiKey" type="password" autocomplete="off" placeholder="${aiSettings.key_configured ? "已配置，重新输入可覆盖" : "输入 API Key 后保存"}" /></label>
-          <label>当前 AI 状态<input value="${aiSettings.key_configured ? `已配置 ${aiSettings.provider || "AI"} 密钥` : "未配置，使用本地模板兜底"}" disabled /></label>
+          <label>当前 AI 状态<input value="${aiSettings.key_configured ? `已配置 ${aiSettings.provider || "AI"} / ${aiSettings.model || "默认模型"}` : "未配置，使用本地模板兜底"}" disabled /></label>
           <button type="button" class="drawer-action info" id="saveAiKeyButton">保存 AI Key</button>
           <button type="button" class="drawer-action muted" id="testAiKeyButton">测试 AI 连接</button>
         </form>
@@ -1364,7 +1376,7 @@ function featureStatusCopy(page) {
     assets: `资产数据已持久化到 SQLite，刷新页面或重启服务后不会丢失。`,
     reports: `报告内容来自后端生成的 HTML/Markdown，已持久化到 SQLite。`,
     "ai-fix": aiSettings.key_configured
-      ? `AI 接口已配置：${aiSettings.provider || aiSettings.runtime_provider || "unknown"}。`
+      ? `AI 接口已配置：${aiSettings.provider || aiSettings.runtime_provider || "unknown"} / ${aiSettings.model || "默认模型"}。`
       : "未配置 API Key 时会使用本地中文模板兜底生成修复建议。",
     schedule: latest ? `最近任务 ${latest.task_id}：${statusLabel(latest.status)}，进度 ${latest.progress}%。` : "当前没有任务历史。",
     settings: `当前默认目标：${scanTarget.base_url}；源码路径：${scanTarget.project_path}。`,
@@ -1435,6 +1447,7 @@ async function renderFeaturePage(page) {
   document.querySelector("#saveAiKeyButton")?.addEventListener("click", async () => {
     const button = document.querySelector("#saveAiKeyButton");
     const provider = document.querySelector("#settingsAiProvider")?.value || "qwen";
+    const model = document.querySelector("#settingsAiModel")?.value || "qwen3.6-flash";
     const apiKey = document.querySelector("#settingsAiKey")?.value.trim();
     if (!apiKey) {
       showToast("请输入 API Key");
@@ -1442,7 +1455,7 @@ async function renderFeaturePage(page) {
     }
     button?.setAttribute("disabled", "true");
     try {
-      await saveAiKey(provider, apiKey);
+      await saveAiKey(provider, apiKey, model);
       await loadBackendSettings();
       await renderFeaturePage("settings");
       showToast("AI Key 已保存到后端进程");
@@ -1456,11 +1469,12 @@ async function renderFeaturePage(page) {
   document.querySelector("#testAiKeyButton")?.addEventListener("click", async () => {
     const button = document.querySelector("#testAiKeyButton");
     const provider = document.querySelector("#settingsAiProvider")?.value || "qwen";
+    const model = document.querySelector("#settingsAiModel")?.value || aiSettings.model || "qwen3.6-flash";
     button?.setAttribute("disabled", "true");
     try {
       const result = await apiRequest("/settings/ai-test", {
         method: "PATCH",
-        body: JSON.stringify({ provider }),
+        body: JSON.stringify({ provider, model }),
       });
       showModal(
         "AI 连接测试",

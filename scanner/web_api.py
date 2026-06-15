@@ -36,6 +36,7 @@ SETTINGS = {
     "default_base_url": DEFAULT_BASE_URL,
     "default_project_path": DEFAULT_PROJECT_PATH,
     "runtime_ai_provider": "",
+    "runtime_ai_model": "qwen3.6-flash",
     "last_ai_test": "",
 }
 ASSETS: dict[str, dict[str, Any]] = {}
@@ -1125,6 +1126,7 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
                     ),
                     "ai_provider": _configured_ai_provider(),
                     "runtime_ai_provider": SETTINGS.get("runtime_ai_provider", ""),
+                    "ai_model": os.getenv("AI_MODEL") or os.getenv("QWEN_MODEL") or SETTINGS.get("runtime_ai_model", "qwen3.6-flash"),
                     "storage": str(DB_PATH),
                     "last_ai_test": SETTINGS.get("last_ai_test", ""),
                 }
@@ -1216,6 +1218,7 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
                     os.getenv(name) for name in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY")
                 ),
                 "ai_provider": _configured_ai_provider(),
+                "ai_model": os.getenv("AI_MODEL") or os.getenv("QWEN_MODEL") or SETTINGS.get("runtime_ai_model", "qwen3.6-flash"),
                 "storage": str(DB_PATH),
             }
         )
@@ -1371,6 +1374,7 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         payload = self._read_json()
         provider = str(payload.get("provider") or "qwen").strip().lower()
         api_key = str(payload.get("api_key") or "").strip()
+        ai_model = str(payload.get("model") or payload.get("ai_model") or "").strip()
         key_names = {
             "qwen": "QWEN_API_KEY",
             "openai": "OPENAI_API_KEY",
@@ -1386,6 +1390,16 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
 
         os.environ[env_name] = api_key
         os.environ["AI_PROVIDER"] = provider
+        if ai_model:
+            os.environ["AI_MODEL"] = ai_model
+            if provider == "qwen":
+                os.environ["QWEN_MODEL"] = ai_model
+            elif provider == "openai":
+                os.environ["OPENAI_MODEL"] = ai_model
+            elif provider == "deepseek":
+                os.environ["DEEPSEEK_MODEL"] = ai_model
+            SETTINGS["runtime_ai_model"] = ai_model
+            _save_setting("runtime_ai_model", ai_model)
         SETTINGS["runtime_ai_provider"] = provider
         _save_setting("runtime_ai_provider", provider)
         self._send_json(
@@ -1393,21 +1407,33 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
                 "ai_key_configured": True,
                 "ai_provider": provider,
                 "runtime_ai_provider": provider,
+                "ai_model": ai_model or os.getenv("AI_MODEL") or os.getenv("QWEN_MODEL") or "",
             }
         )
 
     def _handle_ai_key_test(self) -> None:
         payload = self._read_json()
         provider = str(payload.get("provider") or _configured_ai_provider() or "qwen").strip().lower()
+        ai_model = str(payload.get("model") or payload.get("ai_model") or "").strip()
         if provider not in {"qwen", "openai", "deepseek"}:
             self._send_json({"error": "Unsupported AI provider"}, HTTPStatus.BAD_REQUEST)
             return
+        previous_model = os.environ.get("AI_MODEL")
+        if ai_model:
+            os.environ["AI_MODEL"] = ai_model
 
-        result = test_ai_connection(provider)
-        SETTINGS["last_ai_test"] = _json_dump({**result, "tested_at": _timestamp()})
-        _save_setting("last_ai_test", SETTINGS["last_ai_test"])
-        status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
-        self._send_json(result, status)
+        try:
+            result = test_ai_connection(provider)
+            SETTINGS["last_ai_test"] = _json_dump({**result, "tested_at": _timestamp()})
+            _save_setting("last_ai_test", SETTINGS["last_ai_test"])
+            status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
+            self._send_json(result, status)
+        finally:
+            if ai_model:
+                if previous_model is None:
+                    os.environ.pop("AI_MODEL", None)
+                else:
+                    os.environ["AI_MODEL"] = previous_model
 
     def _handle_ai_advice(self, path: str) -> None:
         payload = self._read_json()
@@ -1423,7 +1449,15 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         vulnerability["ai_advice"] = advice_result["advice"]
         vulnerability["ai_advice_source"] = advice_result["source"]
         with TASK_LOCK:
+            result = task.get("result") or {}
+            if result:
+                result["reports"] = {
+                    "markdown": generate_markdown_report(result),
+                    "html": generate_html_report(result),
+                }
             _save_vulnerabilities_locked(task)
+            if result:
+                _save_report_locked(task)
             with _db() as connection:
                 connection.execute(
                     """
