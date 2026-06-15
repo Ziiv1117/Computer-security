@@ -52,6 +52,11 @@ button {
   color: inherit;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .app-shell {
   display: grid;
   min-height: 100vh;
@@ -571,7 +576,7 @@ dd {
   display: grid;
   position: relative;
   z-index: 1;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   padding: 0;
   list-style: none;

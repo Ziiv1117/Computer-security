@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import urllib.error
 import urllib.request
 
@@ -13,7 +14,12 @@ Given the following vulnerability detected in a local authorized lab project, ex
 2. why it is dangerous,
 3. how to fix it,
 4. give a short secure coding suggestion.
-Do not provide instructions for attacking real third-party websites.
+Do not provide exploitation steps, attack chains, privilege escalation ideas, or new payloads.
+Do not quote or transform exploit payloads, even if the scanner provided them.
+Do not include examples of malicious input.
+Do not claim that a fix has been completed or verified unless the input explicitly says so.
+Do not expand beyond the sanitized evidence already provided by the scanner.
+Focus on defensive remediation, code changes, validation checks, and regression tests.
 Return the answer in Chinese for a course presentation and report.
 Vulnerability:
 {vulnerability}
@@ -102,13 +108,52 @@ def _provider_config() -> tuple[str, str, str, str] | None:
     return None
 
 
+def _sanitized_vulnerability_for_ai(vulnerability: dict) -> dict:
+    allowed_keys = {
+        "id",
+        "type",
+        "risk",
+        "method",
+        "location",
+        "component",
+        "description",
+        "scanner_rule",
+        "remediation_priority",
+        "confidence",
+        "status",
+    }
+    sanitized = {key: value for key, value in vulnerability.items() if key in allowed_keys and value}
+    if vulnerability.get("evidence"):
+        sanitized["evidence_summary"] = "Scanner confirmed the issue in the authorized lab target; exact payloads are intentionally omitted."
+    if vulnerability.get("payload") or vulnerability.get("test_input"):
+        sanitized["payload_policy"] = "Exact test inputs are intentionally omitted; provide remediation guidance only."
+    return sanitized
+
+
+def _sanitize_ai_advice(advice: str) -> str:
+    redactions = [
+        r"'?\s+OR\s+'?1'?\s*=\s*'?1'?",
+        r"UNION\s+SELECT[^\n，。；;]*",
+        r"DROP\s+TABLE[^\n，。；;]*",
+        r"<script\b[^>]*>.*?</script>",
+        r";\s*--",
+        r"--",
+    ]
+    sanitized = advice
+    for pattern in redactions:
+        sanitized = re.sub(pattern, "[测试输入已省略]", sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
 def _call_ai_api(vulnerability: dict) -> tuple[str, str]:
     config = _provider_config()
     if config is None:
         raise RuntimeError("No AI API key configured.")
 
     provider, url, api_key, model = config
-    prompt = PROMPT_TEMPLATE.format(vulnerability=json.dumps(vulnerability, ensure_ascii=False, indent=2))
+    prompt = PROMPT_TEMPLATE.format(
+        vulnerability=json.dumps(_sanitized_vulnerability_for_ai(vulnerability), ensure_ascii=False, indent=2)
+    )
     payload = {
         "model": model,
         "messages": [
@@ -128,10 +173,10 @@ def _call_ai_api(vulnerability: dict) -> tuple[str, str]:
         method="POST",
     )
 
-    with urllib.request.urlopen(request, timeout=5) as response:
+    with urllib.request.urlopen(request, timeout=20) as response:
         data = json.loads(response.read().decode("utf-8"))
 
-    return data["choices"][0]["message"]["content"].strip(), f"{provider}:{model}"
+    return _sanitize_ai_advice(data["choices"][0]["message"]["content"].strip()), f"{provider}:{model}"
 
 
 def generate_ai_advice_result(vulnerability: dict) -> dict[str, str]:
@@ -139,9 +184,9 @@ def generate_ai_advice_result(vulnerability: dict) -> dict[str, str]:
         advice, source = _call_ai_api(vulnerability)
         if advice:
             return {"advice": advice, "source": source}
-    except (KeyError, IndexError, RuntimeError, TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError):
-        pass
-    return {"advice": _fallback_advice(vulnerability), "source": "local-template"}
+    except (KeyError, IndexError, RuntimeError, TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        return {"advice": _fallback_advice(vulnerability), "source": "local-template", "error": str(exc)}
+    return {"advice": _fallback_advice(vulnerability), "source": "local-template", "error": "empty AI response"}
 
 
 def generate_ai_advice(vulnerability: dict) -> str:
@@ -164,7 +209,8 @@ def test_ai_connection(provider: str | None = None) -> dict[str, str | bool]:
             }
         )
         if result["source"] == "local-template":
-            return {"ok": False, "source": result["source"], "message": "AI API key missing or request failed; local template fallback is active."}
+            detail = result.get("error") or "unknown error"
+            return {"ok": False, "source": result["source"], "message": f"AI request failed; local template fallback is active. Detail: {detail}"}
         return {"ok": True, "source": result["source"], "message": "AI provider responded successfully."}
     finally:
         if provider:

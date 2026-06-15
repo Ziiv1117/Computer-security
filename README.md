@@ -147,14 +147,36 @@ GET  /api/health
 POST /api/scan/start
 GET  /api/scan/status/{task_id}
 GET  /api/scan/result/{task_id}
+POST /api/scan/{task_id}/rerun
+POST /api/scan/{task_id}/cancel
+DELETE /api/scan/{task_id}
+DELETE /api/tasks
+GET  /api/assets
+POST /api/assets
+PATCH /api/assets/{asset_id}
+DELETE /api/assets/{asset_id}
+POST /api/assets/{asset_id}/scan
+GET  /api/reports
 GET  /api/report/{task_id}/html
 GET  /api/report/{task_id}/markdown
+PATCH /api/report/{task_id}
+DELETE /api/report/{task_id}
 POST /api/vulnerability/{vuln_id}/ai-advice
 PATCH /api/vulnerability/{vuln_id}/status
 ```
 
 前端点击“开始扫描”后，会调用 `/api/scan/start` 创建任务，轮询 `/api/scan/status/{task_id}`，完成后读取 `/api/scan/result/{task_id}` 并渲染真实扫描结果。
 扫描状态会按规则输出事件，例如 SQL 注入测试、XSS 测试、静态规则、AI 修复建议和报告生成进度。
+
+平台状态会持久化到本地 SQLite：
+
+```text
+data/scanner_platform.db
+```
+
+该数据库保存任务、漏洞、报告、资产、非敏感设置、AI 测试状态和建议版本。API Key 不会写入数据库，长期使用仍建议放入本地 `.env`。
+
+扫描启动前会做健康检查：目标必须是 localhost、127.0.0.1、私有网段或明确授权目标，靶场 `/health` 必须可访问，源码路径必须存在。
 
 默认参数：
 

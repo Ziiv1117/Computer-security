@@ -1,10 +1,48 @@
 from __future__ import annotations
 
+import hashlib
+
 from scanner.ai_advisor import generate_ai_advice_result
 from scanner.dynamic_scanner import run_dynamic_scan
 from scanner.report_generator import generate_html_report, generate_markdown_report
 from scanner.risk_engine import calculate_risk
 from scanner.static_scanner import run_static_scan
+
+
+def _fingerprint(vulnerability: dict) -> str:
+    basis = "|".join(
+        str(vulnerability.get(key, "")).strip().lower()
+        for key in ("type", "location", "request_method", "payload", "scanner_rule", "evidence")
+    )
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+
+
+def _confidence(vulnerability: dict) -> str:
+    if vulnerability.get("method") == "SAST":
+        return "Medium"
+    if vulnerability.get("risk") in {"Critical", "High"} and vulnerability.get("evidence"):
+        return "High"
+    return "Medium"
+
+
+def _deduplicate(vulnerabilities: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    risk_rank = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+    for vulnerability in vulnerabilities:
+        fingerprint = vulnerability.get("fingerprint") or _fingerprint(vulnerability)
+        vulnerability["fingerprint"] = fingerprint
+        vulnerability["confidence"] = vulnerability.get("confidence") or _confidence(vulnerability)
+        if fingerprint not in merged:
+            vulnerability["evidence_count"] = int(vulnerability.get("evidence_count") or 1)
+            merged[fingerprint] = vulnerability
+            continue
+        current = merged[fingerprint]
+        current["evidence_count"] = int(current.get("evidence_count") or 1) + 1
+        if int(vulnerability.get("score") or 0) > int(current.get("score") or 0):
+            current["score"] = vulnerability.get("score")
+        if risk_rank.get(vulnerability.get("risk"), 0) > risk_rank.get(current.get("risk"), 0):
+            current["risk"] = vulnerability.get("risk")
+    return list(merged.values())
 
 
 def run_full_security_scan(base_url: str, project_path: str, progress_callback=None) -> dict:
@@ -28,6 +66,8 @@ def run_full_security_scan(base_url: str, project_path: str, progress_callback=N
         errors.append(f"Static scan failed: {exc}")
         if progress_callback:
             progress_callback("ERROR", f"静态源码扫描失败：{exc}")
+
+    vulnerabilities = _deduplicate(vulnerabilities)
 
     for index, vulnerability in enumerate(vulnerabilities, start=1):
         vulnerability["id"] = f"VULN-{index:03d}"

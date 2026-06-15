@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import re
 from pathlib import Path
@@ -40,6 +41,8 @@ WEAK_PASSWORD_PATTERNS = (
     re.compile(r"save\s*\(\s*password\s*\)", re.IGNORECASE),
     re.compile(r"INSERT\s+INTO\s+users", re.IGNORECASE),
 )
+
+PYTHON_AST_EXTENSIONS = {".py"}
 
 
 def _iter_source_lines(project_path: str):
@@ -139,9 +142,140 @@ def test_weak_password_storage(project_path: str) -> list[dict]:
     return vulnerabilities
 
 
+def _iter_python_files(project_path: str):
+    root = Path(project_path).resolve()
+    if not root.exists():
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [dirname for dirname in dirnames if dirname not in SKIP_DIRS]
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            if path.suffix.lower() in PYTHON_AST_EXTENSIONS:
+                yield root, path
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_call_name(node.value)}.{node.attr}"
+    return ""
+
+
+def _string_value(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "f-string"
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return f"{_string_value(node.left)} + {_string_value(node.right)}"
+    return ""
+
+
+def test_python_ast_security(project_path: str) -> list[dict]:
+    vulnerabilities: list[dict] = []
+    for root, path in _iter_python_files(project_path) or []:
+        try:
+            source = path.read_text(encoding="utf-8", errors="ignore")
+            tree = ast.parse(source)
+        except (OSError, SyntaxError):
+            continue
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                call_name = _call_name(node.func)
+                if call_name.endswith(".execute") or call_name == "execute":
+                    query = _string_value(node.args[0]) if node.args else ""
+                    if "select" in query.lower() or "insert" in query.lower() or "update" in query.lower() or "f-string" in query:
+                        if " + " in query or "f-string" in query:
+                            vulnerabilities.append(
+                                {
+                                    "type": "SQL Injection",
+                                    "category": "Code and Data Security",
+                                    "risk": "High",
+                                    "score": 78,
+                                    "location": _location(root, path, getattr(node, "lineno", 1)),
+                                    "method": "SAST",
+                                    "request_method": "SOURCE",
+                                    "payload": "dynamic SQL execute",
+                                    "scanner_rule": "sast.ast.dynamic_sql_execute",
+                                    "remediation_priority": "P1",
+                                    "evidence": "AST detected dynamic SQL passed to execute().",
+                                    "suggestion": "Use parameterized SQL placeholders or ORM-bound parameters.",
+                                }
+                            )
+                if call_name.endswith("render_template_string"):
+                    vulnerabilities.append(
+                        {
+                            "type": "Cross-Site Scripting",
+                            "category": "Code and Data Security",
+                            "risk": "High",
+                            "score": 76,
+                            "location": _location(root, path, getattr(node, "lineno", 1)),
+                            "method": "SAST",
+                            "request_method": "SOURCE",
+                            "payload": "render_template_string",
+                            "scanner_rule": "sast.ast.render_template_string",
+                            "remediation_priority": "P1",
+                            "evidence": "AST detected render_template_string(), which is risky with user-controlled input.",
+                            "suggestion": "Render trusted templates with autoescaping and avoid string-built templates.",
+                        }
+                    )
+                if call_name.endswith("Markup") or call_name == "Markup":
+                    vulnerabilities.append(
+                        {
+                            "type": "Cross-Site Scripting",
+                            "category": "Code and Data Security",
+                            "risk": "Medium",
+                            "score": 58,
+                            "location": _location(root, path, getattr(node, "lineno", 1)),
+                            "method": "SAST",
+                            "request_method": "SOURCE",
+                            "payload": "Markup",
+                            "scanner_rule": "sast.ast.markup_unescaped_output",
+                            "remediation_priority": "P2",
+                            "evidence": "AST detected Markup(), which may bypass escaping.",
+                            "suggestion": "Avoid marking user-controlled content safe unless it has been sanitized.",
+                        }
+                    )
+
+            if isinstance(node, ast.FunctionDef):
+                route_paths = []
+                decorator_names = []
+                for decorator in node.decorator_list:
+                    if isinstance(decorator, ast.Call):
+                        decorator_names.append(_call_name(decorator.func))
+                        if decorator.args:
+                            route_value = _string_value(decorator.args[0])
+                            if route_value:
+                                route_paths.append(route_value)
+                    else:
+                        decorator_names.append(_call_name(decorator))
+                sensitive_route = any(any(keyword in route.lower() for keyword in ("admin", "debug", "config")) for route in route_paths)
+                has_auth_decorator = any(keyword in name.lower() for name in decorator_names for keyword in ("login", "auth", "role", "permission"))
+                if sensitive_route and not has_auth_decorator:
+                    vulnerabilities.append(
+                        {
+                            "type": "Broken Access Control",
+                            "category": "Authentication and Authorization",
+                            "risk": "High",
+                            "score": 74,
+                            "location": _location(root, path, getattr(node, "lineno", 1)),
+                            "method": "SAST",
+                            "request_method": "SOURCE",
+                            "payload": ", ".join(route_paths),
+                            "scanner_rule": "sast.ast.sensitive_route_without_auth",
+                            "remediation_priority": "P1",
+                            "evidence": "AST detected sensitive Flask route without obvious auth/role decorator.",
+                            "suggestion": "Require login and role checks on sensitive routes server-side.",
+                        }
+                    )
+    return vulnerabilities
+
+
 def run_static_scan(project_path: str, progress_callback=None) -> list[dict]:
     results: list[dict] = []
-    for scanner in (test_hardcoded_secret, test_weak_password_storage):
+    for scanner in (test_hardcoded_secret, test_weak_password_storage, test_python_ast_security):
         try:
             if progress_callback:
                 progress_callback("INFO", f"开始静态规则：{scanner.__name__}")

@@ -76,6 +76,8 @@ def generate_markdown_report(scan_result: dict) -> str:
                 f"- Category: {vulnerability.get('category', '')}",
                 f"- Risk: {vulnerability.get('risk', '')}",
                 f"- Score: {vulnerability.get('score', '')}",
+                f"- Confidence: {vulnerability.get('confidence', 'Medium')}",
+                f"- Fingerprint: {vulnerability.get('fingerprint', '')}",
                 f"- Priority: {vulnerability.get('remediation_priority', 'P3')}",
                 f"- Status: {vulnerability.get('status', '未修复')}",
                 f"- Method: {vulnerability.get('method', '')}",
@@ -113,6 +115,8 @@ def generate_html_report(scan_result: dict) -> str:
             <li><strong>Category:</strong> {escape(str(vulnerability.get('category', '')))}</li>
             <li><strong>Risk:</strong> {escape(str(vulnerability.get('risk', '')))}</li>
             <li><strong>Score:</strong> {escape(str(vulnerability.get('score', '')))}</li>
+            <li><strong>Confidence:</strong> {escape(str(vulnerability.get('confidence', 'Medium')))}</li>
+            <li><strong>Fingerprint:</strong> {escape(str(vulnerability.get('fingerprint', '')))}</li>
             <li><strong>Priority:</strong> {escape(str(vulnerability.get('remediation_priority', 'P3')))}</li>
             <li><strong>Status:</strong> {escape(str(vulnerability.get('status', '未修复')))}</li>
             <li><strong>Method:</strong> {escape(str(vulnerability.get('method', '')))}</li>
