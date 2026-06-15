@@ -777,6 +777,14 @@ function selectVulnerability(id) {
   renderDetail();
 }
 
+function openAiFixForVulnerability(id) {
+  selectedVulnerabilityId = id;
+  setActiveNavigation("ai-fix");
+  history.replaceState(null, "", "#ai-fix");
+  renderFeaturePage("ai-fix");
+  showToast(`已打开 ${selectedVulnerabilityId} 的 AI 修复详情`);
+}
+
 function renderDetail() {
   const item = selectedItem();
   const detail = document.querySelector("#detailContent");
@@ -1057,7 +1065,7 @@ function metricCard(label, value, tone = "total") {
   `;
 }
 
-function featureTable(headers, rows) {
+function featureTable(headers, rows, rowOptions = {}) {
   if (!rows.length) {
     return `<div class="empty-state">暂无真实后端数据。请先在“扫描管理”启动一次扫描。</div>`;
   }
@@ -1068,7 +1076,12 @@ function featureTable(headers, rows) {
           <tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr>
         </thead>
         <tbody>
-          ${rows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}
+          ${rows.map((row) => {
+            const rowId = rowOptions.getRowId?.(row) || "";
+            const selectedClass = rowId && rowId === selectedVulnerabilityId ? " class=\"selected\"" : "";
+            const rowAttr = rowId ? ` data-vuln-row-id="${escapeHtml(rowId)}"` : "";
+            return `<tr${selectedClass}${rowAttr}>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
+          }).join("")}
         </tbody>
       </table>
     </div>
@@ -1078,6 +1091,7 @@ function featureTable(headers, rows) {
 function pageTemplate(page) {
   const vulnerabilityRows = vulnerabilities.map((item) => [
     escapeHtml(item.id),
+    `<button class="mini-text-button" data-view-fix-vuln-id="${escapeHtml(item.id)}">详情</button>`,
     escapeHtml(item.type),
     safeRiskBadge(item.risk),
     escapeHtml(item.location),
@@ -1121,7 +1135,9 @@ function pageTemplate(page) {
         metricCard("高危漏洞", vulnerabilities.filter((item) => item.risk === "High").length, "high"),
         metricCard("待修复", vulnerabilities.filter((item) => item.status === "未修复").length, "medium"),
       ].join(""),
-      body: featureTable(["编号", "漏洞类型", "风险等级", "位置", "检测方式", "状态"], vulnerabilityRows),
+      body: featureTable(["编号", "操作", "漏洞类型", "风险等级", "位置", "检测方式", "状态"], vulnerabilityRows, {
+        getRowId: (row) => row[0],
+      }),
       drawer:
         "这里负责漏洞闭环：筛选漏洞、查看证据、分派修复人、跟踪未修复/已修复状态。",
     },
@@ -1348,7 +1364,7 @@ async function renderFeaturePage(page) {
 
   document.querySelectorAll(".feature-body button").forEach((button) => {
     button.addEventListener("click", () => {
-      if (button.dataset.fixVulnId || button.dataset.aiAction) {
+      if (button.dataset.fixVulnId || button.dataset.viewFixVulnId || button.dataset.aiAction) {
         return;
       }
       const reportUrl = button.dataset.reportUrl;
@@ -1362,6 +1378,9 @@ async function renderFeaturePage(page) {
   });
 
   document.querySelectorAll(".feature-table tbody tr").forEach((row) => {
+    if (row.dataset.vulnRowId) {
+      return;
+    }
     row.addEventListener("click", () => showToast("已选中一条记录，右侧详情可展示完整信息"));
   });
 }
@@ -1425,6 +1444,22 @@ function bindChromeInteractions() {
     "AI 修复": "ai-fix",
     系统设置: "settings",
   };
+
+  document.addEventListener("click", (event) => {
+    const detailButton = event.target.closest("[data-view-fix-vuln-id]");
+    if (detailButton) {
+      event.stopPropagation();
+      openAiFixForVulnerability(detailButton.dataset.viewFixVulnId);
+      return;
+    }
+
+    const vulnRow = event.target.closest("[data-vuln-row-id]");
+    if (vulnRow && !event.target.closest("button")) {
+      selectedVulnerabilityId = vulnRow.dataset.vulnRowId;
+      renderFeaturePage(location.hash.replace("#", "") || "vulnerabilities");
+      showToast(`已选中 ${selectedVulnerabilityId}`);
+    }
+  });
 
   document.querySelectorAll(".topnav-item").forEach((button) => {
     button.addEventListener("click", () => {
