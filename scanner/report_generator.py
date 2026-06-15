@@ -40,7 +40,8 @@ def generate_markdown_report(scan_result: dict) -> str:
                 f"- Location: {vulnerability.get('location', '')}",
                 f"- Evidence: {vulnerability.get('evidence', '')}",
                 f"- Suggestion: {vulnerability.get('suggestion', '')}",
-                "- AI Advice:",
+                f"- Advice Source: {vulnerability.get('ai_advice_source', 'unknown')}",
+                "- Remediation Advice:",
                 "",
                 str(vulnerability.get("ai_advice", "")),
             ]
@@ -69,8 +70,9 @@ def generate_html_report(scan_result: dict) -> str:
             <li><strong>Location:</strong> {escape(str(vulnerability.get('location', '')))}</li>
             <li><strong>Evidence:</strong> {escape(str(vulnerability.get('evidence', '')))}</li>
             <li><strong>Suggestion:</strong> {escape(str(vulnerability.get('suggestion', '')))}</li>
+            <li><strong>Advice Source:</strong> {escape(str(vulnerability.get('ai_advice_source', 'unknown')))}</li>
           </ul>
-          <h4>AI Advice</h4>
+          <h4>Remediation Advice</h4>
           <p>{escape(str(vulnerability.get('ai_advice', ''))).replace(chr(10), '<br>')}</p>
         </section>
 """

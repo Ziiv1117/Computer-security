@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scanner.ai_advisor import generate_ai_advice
+from scanner.ai_advisor import generate_ai_advice_result
 from scanner.dynamic_scanner import run_dynamic_scan
 from scanner.report_generator import generate_html_report, generate_markdown_report
 from scanner.risk_engine import calculate_risk
@@ -24,10 +24,13 @@ def run_full_security_scan(base_url: str, project_path: str) -> dict:
     for index, vulnerability in enumerate(vulnerabilities, start=1):
         vulnerability["id"] = f"VULN-{index:03d}"
         try:
-            vulnerability["ai_advice"] = generate_ai_advice(vulnerability)
+            advice_result = generate_ai_advice_result(vulnerability)
+            vulnerability["ai_advice"] = advice_result["advice"]
+            vulnerability["ai_advice_source"] = advice_result["source"]
         except Exception as exc:
             errors.append(f"AI advice failed for {vulnerability['id']}: {exc}")
             vulnerability["ai_advice"] = vulnerability.get("suggestion", "")
+            vulnerability["ai_advice_source"] = "fallback-error"
 
     risk = calculate_risk(vulnerabilities)
     scan_result = {

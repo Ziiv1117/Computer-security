@@ -216,6 +216,7 @@ function mapApiVulnerability(item) {
     description: item.description || item.evidence || "扫描器发现了一个需要人工复核的安全风险。",
     component: item.component || "unknown",
     advice: item.ai_advice || item.suggestion || "建议根据漏洞证据定位代码路径并补充回归测试。",
+    adviceSource: item.ai_advice_source || "unknown",
   };
 }
 
@@ -883,6 +884,7 @@ async function showAdviceModal() {
         body: JSON.stringify({ task_id: activeTaskId }),
       });
       item.advice = data.ai_advice || item.advice;
+      item.adviceSource = data.ai_advice_source || item.adviceSource;
     } catch (error) {
       addEvent("WARN", `AI 建议接口调用失败，使用当前建议：${error.message}`);
     }
@@ -891,6 +893,10 @@ async function showAdviceModal() {
   showModal(
     "AI 修复建议",
     `<p class="modal-copy">${escapeHtml(item.advice)}</p>
+    <div class="code-suggestion">
+      <strong>建议来源</strong>
+      <span>${escapeHtml(item.adviceSource || "unknown")}</span>
+    </div>
     <div class="code-suggestion">
       <strong>建议优先级</strong>
       <span>${escapeHtml(item.risk === "Critical" ? "立即修复" : "本轮迭代修复")}</span>
@@ -1193,6 +1199,7 @@ function pageTemplate(page) {
           </section>
           <section class="detail-card">
             <h4>${escapeHtml(currentFixItem?.id || "")} 修复建议</h4>
+            <p class="detail-copy">建议来源：${escapeHtml(currentFixItem?.adviceSource || "unknown")}</p>
             <p class="detail-copy">${escapeHtml(currentFixItem?.advice || "暂无建议，可点击下方按钮生成。")}</p>
             <div class="code-compare">
               <div>
@@ -1253,6 +1260,7 @@ function pageTemplate(page) {
           <label>API Key<input id="settingsAiKey" type="password" autocomplete="off" placeholder="${aiSettings.key_configured ? "已配置，重新输入可覆盖" : "输入 API Key 后保存"}" /></label>
           <label>当前 AI 状态<input value="${aiSettings.key_configured ? `已配置 ${aiSettings.provider || "AI"} 密钥` : "未配置，使用本地模板兜底"}" disabled /></label>
           <button type="button" class="drawer-action info" id="saveAiKeyButton">保存 AI Key</button>
+          <button type="button" class="drawer-action muted" id="testAiKeyButton">测试 AI 连接</button>
         </form>
       `,
       drawer:
@@ -1337,6 +1345,31 @@ async function renderFeaturePage(page) {
       showToast("AI Key 已保存到后端进程");
     } catch (error) {
       showToast(`AI Key 保存失败：${error.message}`);
+    } finally {
+      button?.removeAttribute("disabled");
+    }
+  });
+
+  document.querySelector("#testAiKeyButton")?.addEventListener("click", async () => {
+    const button = document.querySelector("#testAiKeyButton");
+    const provider = document.querySelector("#settingsAiProvider")?.value || "qwen";
+    button?.setAttribute("disabled", "true");
+    try {
+      const result = await apiRequest("/settings/ai-test", {
+        method: "PATCH",
+        body: JSON.stringify({ provider }),
+      });
+      showModal(
+        "AI 连接测试",
+        `<p class="modal-copy">连接成功：${escapeHtml(result.message || "")}</p>
+        <div class="code-suggestion"><strong>来源</strong><span>${escapeHtml(result.source || provider)}</span></div>`,
+      );
+    } catch (error) {
+      showModal(
+        "AI 连接测试",
+        `<p class="modal-copy">连接失败：${escapeHtml(error.message)}</p>
+        <div class="code-suggestion"><strong>当前状态</strong><span>将使用本地模板兜底</span></div>`,
+      );
     } finally {
       button?.removeAttribute("disabled");
     }

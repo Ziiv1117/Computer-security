@@ -8,6 +8,12 @@
   - SQL Injection: 检测 `/login` 是否存在 SQL 注入登录绕过
   - Cross-Site Scripting: 检测 `/comments` 是否原样渲染脚本标签
   - Broken Access Control: 检测普通用户是否能访问 `/admin` 或其他用户资料
+  - Cross-Site Request Forgery: 检测 `/transfer` 是否缺少 CSRF token
+  - Path Traversal: 检测 `/download` 是否可读取目录外文件
+  - Server-Side Request Forgery: 检测 `/fetch` 是否可抓取本机 URL
+  - Open Redirect: 检测 `/redirect` 是否接受外部跳转地址
+  - Mass Assignment: 检测 `/settings` 是否允许普通用户提交权限字段
+  - Information Disclosure: 检测 `/debug/config` 是否暴露敏感配置
 - 静态漏洞检测 SAST
   - Hardcoded Secret: 检测源码中的硬编码密钥、Token、密码等
   - Weak Password Storage: 检测 MD5、SHA1、明文密码存储等弱密码模式
@@ -77,6 +83,7 @@ QWEN_API_KEY=your_qwen_api_key_here
 如果没有配置 API Key，扫描器仍然可以运行，并会使用内置中文模板生成修复建议。
 
 也可以在前端控制台的“系统设置”页临时输入 API Key。该方式只会把密钥保存到当前后端进程中，重启 `serve_app.py` 后失效；需要长期使用时仍建议写入本地 `.env`。
+保存后可以点击“测试 AI 连接”确认当前密钥是否能真实调用模型。报告和 AI 修复页会标明建议来源，例如 `qwen:qwen-plus` 或 `local-template`。
 
 ## 启动扫描
 

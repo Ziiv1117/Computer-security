@@ -60,35 +60,41 @@ def _fallback_advice(vulnerability: dict) -> str:
     )
 
 
-def _provider_config() -> tuple[str, str, str] | None:
+def _provider_config() -> tuple[str, str, str, str] | None:
     load_env_file()
 
     selected_provider = os.getenv("AI_PROVIDER", "").strip().lower()
     if selected_provider == "openai" and os.getenv("OPENAI_API_KEY"):
-        return ("https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
+        return ("openai", "https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
     if selected_provider == "deepseek" and os.getenv("DEEPSEEK_API_KEY"):
         return (
+            "deepseek",
             "https://api.deepseek.com/v1/chat/completions",
             os.environ["DEEPSEEK_API_KEY"],
             "deepseek-chat",
         )
     if selected_provider == "qwen" and os.getenv("QWEN_API_KEY"):
         return (
+            "qwen",
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
             os.environ["QWEN_API_KEY"],
             "qwen-plus",
         )
+    if selected_provider in {"openai", "deepseek", "qwen"}:
+        return None
 
     if os.getenv("OPENAI_API_KEY"):
-        return ("https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
+        return ("openai", "https://api.openai.com/v1/chat/completions", os.environ["OPENAI_API_KEY"], "gpt-4o-mini")
     if os.getenv("DEEPSEEK_API_KEY"):
         return (
+            "deepseek",
             "https://api.deepseek.com/v1/chat/completions",
             os.environ["DEEPSEEK_API_KEY"],
             "deepseek-chat",
         )
     if os.getenv("QWEN_API_KEY"):
         return (
+            "qwen",
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
             os.environ["QWEN_API_KEY"],
             "qwen-plus",
@@ -96,12 +102,12 @@ def _provider_config() -> tuple[str, str, str] | None:
     return None
 
 
-def _call_ai_api(vulnerability: dict) -> str:
+def _call_ai_api(vulnerability: dict) -> tuple[str, str]:
     config = _provider_config()
     if config is None:
         raise RuntimeError("No AI API key configured.")
 
-    url, api_key, model = config
+    provider, url, api_key, model = config
     prompt = PROMPT_TEMPLATE.format(vulnerability=json.dumps(vulnerability, ensure_ascii=False, indent=2))
     payload = {
         "model": model,
@@ -125,12 +131,44 @@ def _call_ai_api(vulnerability: dict) -> str:
     with urllib.request.urlopen(request, timeout=5) as response:
         data = json.loads(response.read().decode("utf-8"))
 
-    return data["choices"][0]["message"]["content"].strip()
+    return data["choices"][0]["message"]["content"].strip(), f"{provider}:{model}"
+
+
+def generate_ai_advice_result(vulnerability: dict) -> dict[str, str]:
+    try:
+        advice, source = _call_ai_api(vulnerability)
+        if advice:
+            return {"advice": advice, "source": source}
+    except (KeyError, IndexError, RuntimeError, TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError):
+        pass
+    return {"advice": _fallback_advice(vulnerability), "source": "local-template"}
 
 
 def generate_ai_advice(vulnerability: dict) -> str:
+    return generate_ai_advice_result(vulnerability)["advice"]
+
+
+def test_ai_connection(provider: str | None = None) -> dict[str, str | bool]:
+    load_env_file()
+    previous_provider = os.environ.get("AI_PROVIDER")
+    if provider:
+        os.environ["AI_PROVIDER"] = provider
     try:
-        advice = _call_ai_api(vulnerability)
-        return advice or _fallback_advice(vulnerability)
-    except (KeyError, IndexError, RuntimeError, TimeoutError, urllib.error.URLError, OSError, json.JSONDecodeError):
-        return _fallback_advice(vulnerability)
+        result = generate_ai_advice_result(
+            {
+                "type": "AI Connection Test",
+                "risk": "Low",
+                "method": "SELF_TEST",
+                "location": "system-settings",
+                "evidence": "The scanner is testing whether the configured model can return defensive advice.",
+            }
+        )
+        if result["source"] == "local-template":
+            return {"ok": False, "source": result["source"], "message": "AI API key missing or request failed; local template fallback is active."}
+        return {"ok": True, "source": result["source"], "message": "AI provider responded successfully."}
+    finally:
+        if provider:
+            if previous_provider is None:
+                os.environ.pop("AI_PROVIDER", None)
+            else:
+                os.environ["AI_PROVIDER"] = previous_provider

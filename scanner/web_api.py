@@ -12,7 +12,7 @@ from threading import Lock, Thread
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from scanner.ai_advisor import generate_ai_advice, load_env_file
+from scanner.ai_advisor import generate_ai_advice_result, load_env_file, test_ai_connection
 from scanner.full_scan import run_full_security_scan
 from scanner.report_generator import generate_html_report, generate_markdown_report
 
@@ -47,6 +47,12 @@ VULNERABILITY_DESCRIPTIONS = {
     "Broken Access Control": "普通用户可以访问管理员页面或其他用户资源，说明服务端权限校验不足。",
     "Hardcoded Secret": "源码中疑似包含硬编码密钥、Token 或密码，代码泄露后会暴露凭据。",
     "Weak Password Storage": "系统疑似使用弱哈希或明文方式处理密码，泄露后容易被离线破解。",
+    "Cross-Site Request Forgery": "关键操作缺少 CSRF 防护，已登录用户可能被诱导提交非预期请求。",
+    "Path Traversal": "文件读取接口未限制最终路径，可能读取允许目录之外的文件。",
+    "Server-Side Request Forgery": "服务端会访问用户传入的 URL，可能被滥用访问本机或内网资源。",
+    "Open Redirect": "跳转接口信任用户输入的外部地址，可能被用于钓鱼跳转。",
+    "Mass Assignment": "后端批量接收用户提交字段，普通用户可能修改权限字段。",
+    "Information Disclosure": "调试接口暴露配置、密钥或用户数据，可能导致敏感信息泄露。",
 }
 
 
@@ -231,6 +237,7 @@ def _normalize_vulnerability(raw: dict[str, Any], index: int, discovered_at: str
         "evidence_count": 1 if evidence else 0,
         "suggestion": str(raw.get("suggestion") or ""),
         "ai_advice": ai_advice,
+        "ai_advice_source": str(raw.get("ai_advice_source") or "unknown"),
         "description": VULNERABILITY_DESCRIPTIONS.get(vuln_type, evidence or "扫描器发现了一个需要人工复核的安全风险。"),
         "component": _component_from_location(location),
         "status": status,
@@ -404,6 +411,9 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/settings/ai-key":
             self._handle_ai_key_update()
             return
+        if parsed.path == "/api/settings/ai-test":
+            self._handle_ai_key_test()
+            return
         if parsed.path.startswith("/api/vulnerability/") and parsed.path.endswith("/status"):
             self._handle_vulnerability_status(parsed.path)
             return
@@ -568,6 +578,17 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
             }
         )
 
+    def _handle_ai_key_test(self) -> None:
+        payload = self._read_json()
+        provider = str(payload.get("provider") or _configured_ai_provider() or "qwen").strip().lower()
+        if provider not in {"qwen", "openai", "deepseek"}:
+            self._send_json({"error": "Unsupported AI provider"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        result = test_ai_connection(provider)
+        status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
+        self._send_json(result, status)
+
     def _handle_ai_advice(self, path: str) -> None:
         payload = self._read_json()
         task_id = str(payload.get("task_id") or "")
@@ -578,9 +599,16 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
         if task is None or vulnerability is None:
             self._send_json({"error": "Vulnerability not found"}, HTTPStatus.NOT_FOUND)
             return
-        advice = generate_ai_advice(vulnerability)
-        vulnerability["ai_advice"] = advice
-        self._send_json({"id": vuln_id, "ai_advice": advice})
+        advice_result = generate_ai_advice_result(vulnerability)
+        vulnerability["ai_advice"] = advice_result["advice"]
+        vulnerability["ai_advice_source"] = advice_result["source"]
+        self._send_json(
+            {
+                "id": vuln_id,
+                "ai_advice": advice_result["advice"],
+                "ai_advice_source": advice_result["source"],
+            }
+        )
 
     def _handle_vulnerability_status(self, path: str) -> None:
         payload = self._read_json()
