@@ -107,6 +107,16 @@ python run_scan.py
 
 当前分支已经提供本地 API + 静态前端服务：
 
+更方便的方式是直接双击：
+
+```text
+start_system.bat
+```
+
+它会自动启动本地靶场、扫描平台，并打开前端控制台。
+
+手动启动方式：
+
 ```powershell
 python serve_app.py
 ```
