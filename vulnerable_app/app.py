@@ -30,8 +30,39 @@ DEMO_USERS = [
 ]
 
 DEFAULT_COMMENTS = [
-    "欢迎来到课程靶场评论区。",
-    "这里会故意原样渲染评论内容，便于扫描器识别 XSS。",
+    "这台九成新的校园自行车还在吗？可以今晚在东门交易吗？",
+    "求购一台二手显示器，预算 300 以内，支持宿舍楼下自提。",
+]
+
+FEATURED_PRODUCTS = [
+    {
+        "title": "九成新山地车",
+        "price": "￥320",
+        "tag": "东区宿舍",
+        "seller": "user1",
+        "desc": "通勤代步，刹车和变速都正常，送车锁。",
+    },
+    {
+        "title": "考研英语资料全套",
+        "price": "￥45",
+        "tag": "图书馆自取",
+        "seller": "user2",
+        "desc": "含真题、单词书和笔记，适合备考同学。",
+    },
+    {
+        "title": "宿舍小冰箱",
+        "price": "￥180",
+        "tag": "南区 5 栋",
+        "seller": "admin",
+        "desc": "容量 46L，制冷正常，毕业出清。",
+    },
+    {
+        "title": "机械键盘 87 键",
+        "price": "￥99",
+        "tag": "计算机学院",
+        "seller": "user1",
+        "desc": "茶轴，有轻微使用痕迹，支持当面验货。",
+    },
 ]
 
 
@@ -151,18 +182,18 @@ def current_user_label() -> str:
 def page(title: str, body: str, active: str = "") -> str:
     username = session.get("username")
     auth_link = (
-        f'<span class="user">Logged in as {username}</span><a href="/logout">Logout</a>'
+        f'<span class="user">当前用户：{username}</span><a href="/logout">退出</a>'
         if username
-        else '<a href="/login">Login</a>'
+        else '<a href="/login">登录 / 发布</a>'
     )
     nav_items = [
-        ("/", "Home", "home"),
-        ("/login", "Login", "login"),
-        ("/comments", "Comments", "comments"),
-        ("/admin", "Admin", "admin"),
-        ("/profile/2", "Profile #2", "profile"),
-        ("/advanced", "Advanced", "advanced"),
-        ("/lab", "Lab", "lab"),
+        ("/", "首页推荐", "home"),
+        ("/comments", "商品留言", "comments"),
+        ("/login", "登录发布", "login"),
+        ("/profile/2", "卖家主页", "profile"),
+        ("/advanced", "交易服务", "advanced"),
+        ("/admin", "卖家中心", "admin"),
+        ("/lab", "靶场控制", "lab"),
     ]
     nav_html = "".join(
         f'<a class="{"active" if key == active else ""}" href="{href}">{label}</a>'
@@ -177,57 +208,66 @@ def page(title: str, body: str, active: str = "") -> str:
       <title>{title}</title>
       <style>
         :root {{
-          --ink: #172033;
-          --muted: #5f6c80;
-          --line: #d8dee8;
+          --ink: #1f2933;
+          --muted: #697586;
+          --line: #ebe5dc;
           --panel: #ffffff;
-          --wash: #f5f7fb;
-          --brand: #2563eb;
+          --wash: #f7f3ee;
+          --brand: #ff6a00;
+          --brand-2: #ffd14d;
           --danger: #b42318;
-          --warn-bg: #fff4d6;
-          --ok-bg: #e8f7ef;
+          --warn-bg: #fff7df;
+          --ok-bg: #e9f8ef;
         }}
         * {{ box-sizing: border-box; }}
         body {{
           margin: 0;
-          font-family: Arial, "Microsoft YaHei", sans-serif;
-          background: var(--wash);
+          font-family: Arial, "Microsoft YaHei", "PingFang SC", sans-serif;
+          background:
+            linear-gradient(180deg, #fff2d0 0, #f7f3ee 230px),
+            var(--wash);
           color: var(--ink);
           line-height: 1.55;
         }}
         header {{
-          background: #172033;
-          color: #fff;
-          padding: 14px 24px;
+          position: sticky;
+          top: 0;
+          z-index: 2;
+          background: rgba(255, 255, 255, 0.92);
+          color: var(--ink);
+          padding: 12px 24px;
           display: flex;
           justify-content: space-between;
           gap: 18px;
           align-items: center;
           flex-wrap: wrap;
+          border-bottom: 1px solid rgba(255, 106, 0, 0.16);
+          backdrop-filter: blur(12px);
         }}
-        header strong {{ font-size: 18px; }}
-        header a {{ color: #fff; text-decoration: none; margin-left: 14px; }}
-        .shell {{ max-width: 1060px; margin: 0 auto; padding: 24px; }}
+        header strong {{ font-size: 22px; color: var(--brand); letter-spacing: 0; }}
+        header a {{ color: var(--ink); text-decoration: none; margin-left: 14px; font-weight: 700; }}
+        .shell {{ max-width: 1160px; margin: 0 auto; padding: 22px 24px 36px; }}
         .topnav {{
           display: flex;
           gap: 8px;
           flex-wrap: wrap;
-          margin-bottom: 16px;
+          margin-bottom: 18px;
         }}
         .topnav a {{
-          border: 1px solid var(--line);
+          border: 1px solid rgba(255, 106, 0, 0.14);
           color: var(--ink);
-          background: #fff;
+          background: rgba(255, 255, 255, 0.82);
           text-decoration: none;
-          padding: 8px 12px;
-          border-radius: 6px;
+          padding: 9px 14px;
+          border-radius: 999px;
         }}
-        .topnav a.active {{ border-color: var(--brand); color: var(--brand); }}
+        .topnav a.active {{ border-color: var(--brand); color: var(--brand); background: #fff8ed; }}
         main {{
           background: var(--panel);
           border: 1px solid var(--line);
-          border-radius: 8px;
+          border-radius: 14px;
           padding: 24px;
+          box-shadow: 0 20px 44px rgba(119, 84, 48, 0.12);
         }}
         h1 {{ margin-top: 0; font-size: 28px; }}
         h2 {{ margin-top: 28px; font-size: 20px; }}
@@ -242,10 +282,10 @@ def page(title: str, body: str, active: str = "") -> str:
         }}
         button, .button {{
           display: inline-block;
-          background: var(--brand);
-          color: white;
+          background: linear-gradient(135deg, var(--brand), #ff9b21);
+          color: #fff;
           border: 0;
-          border-radius: 6px;
+          border-radius: 999px;
           padding: 10px 16px;
           cursor: pointer;
           text-decoration: none;
@@ -270,14 +310,76 @@ def page(title: str, body: str, active: str = "") -> str:
         }}
         .grid {{
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-          gap: 14px;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 16px;
         }}
         .card {{
           border: 1px solid var(--line);
-          border-radius: 8px;
-          padding: 14px;
+          border-radius: 12px;
+          padding: 16px;
           background: #fff;
+        }}
+        .hero {{
+          display: grid;
+          grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+          gap: 18px;
+          align-items: stretch;
+          margin-bottom: 18px;
+        }}
+        .hero-main {{
+          min-height: 230px;
+          border-radius: 18px;
+          padding: 28px;
+          color: #3c2600;
+          background:
+            linear-gradient(135deg, rgba(255, 209, 77, 0.96), rgba(255, 106, 0, 0.88)),
+            #ffb000;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }}
+        .hero-main h1 {{ max-width: 620px; font-size: 38px; line-height: 1.15; }}
+        .hero-main p {{ color: #4a3000; max-width: 640px; font-size: 17px; }}
+        .searchbar {{
+          display: flex;
+          gap: 10px;
+          padding: 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.9);
+        }}
+        .searchbar input {{ margin: 0; border: 0; background: transparent; }}
+        .searchbar button {{ white-space: nowrap; }}
+        .quick-panel {{
+          border-radius: 18px;
+          padding: 20px;
+          background: #fff;
+          border: 1px solid var(--line);
+        }}
+        .product-card {{
+          display: grid;
+          gap: 10px;
+          min-height: 190px;
+        }}
+        .product-cover {{
+          height: 96px;
+          border-radius: 10px;
+          background:
+            linear-gradient(135deg, rgba(255, 106, 0, 0.24), rgba(50, 184, 112, 0.18)),
+            #f7eee1;
+          display: grid;
+          place-items: center;
+          color: #9a5a00;
+          font-weight: 800;
+        }}
+        .price {{ color: var(--brand); font-size: 22px; font-weight: 900; }}
+        .tag {{
+          display: inline-block;
+          width: fit-content;
+          padding: 3px 8px;
+          border-radius: 999px;
+          color: #8a4b00;
+          background: #fff2d0;
+          font-size: 13px;
         }}
         .notice {{
           background: var(--warn-bg);
@@ -299,6 +401,17 @@ def page(title: str, body: str, active: str = "") -> str:
           padding: 12px 0;
         }}
         .meta {{ color: var(--muted); font-size: 13px; }}
+        .sr-only {{
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0, 0, 0, 0);
+          white-space: nowrap;
+          border: 0;
+        }}
         .split {{
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
@@ -316,12 +429,14 @@ def page(title: str, body: str, active: str = "") -> str:
         }}
         @media (max-width: 780px) {{
           .split {{ grid-template-columns: 1fr; }}
+          .hero {{ grid-template-columns: 1fr; }}
+          .hero-main h1 {{ font-size: 30px; }}
         }}
       </style>
     </head>
     <body>
       <header>
-        <strong>Vulnerable Test Site</strong>
+        <strong>橙集校园</strong>
         <nav>{auth_link}</nav>
       </header>
       <div class="shell">
@@ -335,37 +450,53 @@ def page(title: str, body: str, active: str = "") -> str:
 
 @app.get("/")
 def index() -> str:
-    return page(
-        "Vulnerable Test Site",
+    product_cards = "\n".join(
+        f"""
+        <section class="card product-card">
+          <div class="product-cover">{item["title"]}</div>
+          <strong>{item["title"]}</strong>
+          <span class="price">{item["price"]}</span>
+          <span class="tag">{item["tag"]}</span>
+          <p>{item["desc"]}</p>
+          <p class="meta">卖家：{item["seller"]} · 支持线下验货</p>
+        </section>
         """
-        <h1>本地漏洞靶场</h1>
-        <p class="notice">本网站只用于课程实验和本地授权扫描，包含故意设计的漏洞。</p>
+        for item in FEATURED_PRODUCTS
+    )
+    return page(
+        "橙集校园 - 校园二手交易",
+        f"""
+        <section class="hero">
+          <div class="hero-main">
+            <div>
+              <h1>把闲置留在校园，把好物交给同学</h1>
+              <p>橙集校园是面向课程演示的本地二手交易平台，包含商品浏览、留言咨询、卖家主页和交易服务等常见流程。</p>
+            </div>
+            <form class="searchbar" action="/comments" method="get">
+              <input name="q" placeholder="搜索自行车、教材、键盘、宿舍小家电">
+              <button type="submit">搜索好物</button>
+            </form>
+          </div>
+          <aside class="quick-panel">
+            <h2>今日校园热卖</h2>
+            <p><span class="price">27</span> 件好物正在流转</p>
+            <p>登录后可发布闲置、联系卖家、查看交易服务。</p>
+            <p><a class="button" href="/login">登录并发布</a></p>
+          </aside>
+        </section>
+        <h2>推荐闲置</h2>
         <div class="grid">
-          <section class="card">
-            <h2>DAST 目标</h2>
-            <p><code>POST /login</code> SQL 注入登录绕过</p>
-            <p><code>POST /comments</code> 和 <code>GET /comments</code> 存储型 XSS</p>
-            <p><code>GET /admin</code> 和 <code>GET /profile/2</code> 越权访问</p>
-          </section>
-          <section class="card">
-            <h2>SAST 目标</h2>
-            <p>源码里保留演示用硬编码假密钥。</p>
-            <p>用户密码同时保存为 MD5 和明文，便于弱密码存储规则命中。</p>
-          </section>
-          <section class="card">
-            <h2>进阶漏洞区</h2>
-            <p>包含 CSRF、路径穿越、SSRF、开放重定向、批量赋值、调试信息泄露。</p>
-            <p><a class="button" href="/advanced">Open advanced labs</a></p>
-          </section>
+          {product_cards}
         </div>
-        <h2>测试账号</h2>
+        <h2>演示账号</h2>
         <table>
-          <tr><th>Username</th><th>Password</th><th>Role</th></tr>
-          <tr><td><code>admin</code></td><td><code>admin123</code></td><td>admin</td></tr>
-          <tr><td><code>user1</code></td><td><code>123456</code></td><td>user</td></tr>
-          <tr><td><code>user2</code></td><td><code>123456</code></td><td>user</td></tr>
-          <tr><td><code>lab_backdoor</code></td><td><code>letmein-lab</code></td><td>admin</td></tr>
+          <tr><th>账号</th><th>密码</th><th>身份</th><th>用途</th></tr>
+          <tr><td><code>admin</code></td><td><code>admin123</code></td><td>平台运营</td><td>卖家中心演示</td></tr>
+          <tr><td><code>user1</code></td><td><code>123456</code></td><td>普通学生</td><td>商品发布和留言</td></tr>
+          <tr><td><code>user2</code></td><td><code>123456</code></td><td>普通学生</td><td>个人主页越权演示</td></tr>
+          <tr><td><code>lab_backdoor</code></td><td><code>letmein-lab</code></td><td>本地调试</td><td>课程靶场辅助登录</td></tr>
         </table>
+        <p class="notice">说明：这是本地授权课程靶场。页面伪装成正常交易平台，但保留故意设计的漏洞测试点。</p>
         """,
         active="home",
     )
@@ -375,17 +506,18 @@ def index() -> str:
 def login():
     if request.method == "GET":
         return page(
-            "Login",
+            "登录发布 - 橙集校园",
             """
-            <h1>登录</h1>
-            <p>扫描器会用错误密码和 SQL 注入 payload 对这个接口做对比。</p>
+            <h1>登录橙集校园</h1>
+            <p>登录后可以发布闲置、查看卖家中心、管理个人资料。</p>
             <form method="post">
-              <label>Username</label>
+              <label>校园账号</label>
               <input name="username" autocomplete="username" value="user1">
-              <label>Password</label>
+              <label>密码</label>
               <input name="password" type="password" autocomplete="current-password" value="123456">
-              <button type="submit">Login</button>
+              <button type="submit">登录并进入卖家中心</button>
             </form>
+            <p class="meta">演示账号：user1 / 123456。课程扫描器仍会使用此路径测试登录安全。</p>
             """,
             active="login",
         )
@@ -400,12 +532,12 @@ def login():
         session["username"] = "lab_backdoor"
         session["role"] = "admin"
         return page(
-            "Dashboard",
+            "卖家中心",
             """
-            <h1>Welcome, lab_backdoor</h1>
-            <p class="ok">Login success. Role: <code>admin</code></p>
-            <p class="notice">This is an intentional lab backdoor for local testing.</p>
-            <p><a class="button" href="/admin">Open admin dashboard</a></p>
+            <h1>欢迎回来，lab_backdoor</h1>
+            <p class="ok">登录成功。当前身份：<code>平台运营</code></p>
+            <p class="notice">这是本地课程靶场的调试入口。</p>
+            <p><a class="button" href="/admin">进入卖家中心</a></p>
             """,
             active="login",
         )
@@ -429,11 +561,12 @@ def login():
         session["username"] = user["username"]
         session["role"] = user["role"]
         return page(
-            "Dashboard",
+            "卖家中心",
             f"""
-            <h1>Welcome, {user["username"]}</h1>
-            <p class="ok">Login success. Role: <code>{user["role"]}</code></p>
-            <p><a class="button" href="/admin">Open admin dashboard</a></p>
+            <h1>欢迎回来，{user["username"]}</h1>
+            <p class="ok">登录成功。当前身份：<code>{user["role"]}</code></p>
+            <p>你可以继续发布校园闲置，或查看卖家中心的数据看板。</p>
+            <p><a class="button" href="/admin">进入卖家中心</a></p>
             """,
             active="login",
         )
@@ -441,7 +574,7 @@ def login():
     return (
         page(
             "Login failed",
-            "<h1>Login failed</h1><p>Invalid username or password.</p>",
+            "<h1>登录失败</h1><p>账号或密码不正确，请检查后重试。</p>",
             active="login",
         ),
         401,
@@ -479,20 +612,20 @@ def comments() -> str:
 
     rendered_comments = "\n".join(
         f'<div class="comment"><div>{row["content"]}</div>'
-        f'<div class="meta">author: {row["author"]}</div></div>'
+        f'<div class="meta">留言人：{row["author"]} · 商品咨询区</div></div>'
         for row in rows
     )
     return page(
-        "Comments",
+        "商品留言 - 橙集校园",
         f"""
-        <h1>评论区</h1>
-        <p>这里故意不做 HTML 转义，扫描器提交脚本标签后会在页面中原样看到 payload。</p>
+        <h1>商品留言</h1>
+        <p>买家可以在这里咨询商品成色、取货地点和交易时间。平台会把留言展示给卖家和其他同学。</p>
         <form method="post">
-          <label>Comment</label>
-          <textarea name="comment" rows="4"></textarea>
-          <button type="submit">Post</button>
+          <label>给卖家留言</label>
+          <textarea name="comment" rows="4" placeholder="例如：显示器还在吗？今晚可以在图书馆门口交易吗？"></textarea>
+          <button type="submit">发布留言</button>
         </form>
-        <h2>All comments</h2>
+        <h2>最新留言</h2>
         {rendered_comments or "<p>No comments yet.</p>"}
         """,
         active="comments",
@@ -517,12 +650,19 @@ def admin() -> str:
 
     # Vulnerable by design: login is checked, but admin role is not checked.
     return page(
-        "Admin Dashboard",
+        "卖家中心 - 橙集校园",
         f"""
-        <h1>Admin dashboard</h1>
-        <p class="notice">当前用户：<code>{current_user_label()}</code>。此页故意没有校验管理员角色。</p>
+        <h1>卖家中心</h1>
+        <span class="sr-only">admin dashboard</span>
+        <p class="notice">当前用户：<code>{current_user_label()}</code>。这里伪装成平台运营数据看板，但故意缺少角色校验。</p>
+        <div class="grid">
+          <section class="card"><h2>今日发布</h2><p><span class="price">12</span> 件</p></section>
+          <section class="card"><h2>待确认交易</h2><p><span class="price">5</span> 单</p></section>
+          <section class="card"><h2>需要复核留言</h2><p><span class="price">3</span> 条</p></section>
+        </div>
+        <h2>平台用户</h2>
         <table>
-          <tr><th>ID</th><th>Username</th><th>Role</th><th>Email</th><th>Note</th></tr>
+          <tr><th>ID</th><th>账号</th><th>身份</th><th>邮箱</th><th>备注</th></tr>
           {user_rows}
         </table>
         """,
@@ -546,17 +686,22 @@ def profile(user_id: int) -> str:
         return page("Not found", "<h1>Profile not found</h1>", active="profile"), 404
 
     return page(
-        "Profile",
+        "卖家主页 - 橙集校园",
         f"""
-        <h1>Profile: {user["username"]}</h1>
-        <p class="notice">当前登录用户可以直接读取 URL 中指定 ID 的资料，没有校验资源归属。</p>
+        <h1>卖家主页：{user["username"]}</h1>
+        <p class="notice">这里展示卖家公开资料和联系信息。当前实现故意没有校验资料归属。</p>
         <table>
-          <tr><th>User ID</th><td><code>{user["id"]}</code></td></tr>
-          <tr><th>Email</th><td><code>{user["email"]}</code></td></tr>
-          <tr><th>Role</th><td><code>{user["role"]}</code></td></tr>
-          <tr><th>Note</th><td>{user["note"]}</td></tr>
+          <tr><th>卖家 ID</th><td><code>{user["id"]}</code></td></tr>
+          <tr><th>联系邮箱</th><td><code>{user["email"]}</code></td></tr>
+          <tr><th>账号身份</th><td><code>{user["role"]}</code></td></tr>
+          <tr><th>个人说明</th><td>{user["note"]}</td></tr>
         </table>
-        <p><a href="/profile/1">Profile #1</a> | <a href="/profile/2">Profile #2</a> | <a href="/profile/3">Profile #3</a></p>
+        <h2>在售闲置</h2>
+        <div class="grid">
+          <section class="card product-card"><div class="product-cover">教材</div><strong>课程教材打包</strong><span class="price">￥60</span><p>适合低年级同学。</p></section>
+          <section class="card product-card"><div class="product-cover">键盘</div><strong>二手机械键盘</strong><span class="price">￥99</span><p>支持当面验货。</p></section>
+        </div>
+        <p><a href="/profile/1">卖家 #1</a> | <a href="/profile/2">卖家 #2</a> | <a href="/profile/3">卖家 #3</a></p>
         """,
         active="profile",
     )
@@ -565,40 +710,40 @@ def profile(user_id: int) -> str:
 @app.get("/advanced")
 def advanced_home() -> str:
     return page(
-        "Advanced Vulnerability Labs",
+        "交易服务 - 橙集校园",
         """
-        <h1>进阶漏洞实验区</h1>
-        <p class="notice">这些模块用于让作业不止停留在基础漏洞。所有数据和凭据均为本地演示用途。</p>
+        <h1>交易服务</h1>
+        <p>这里模拟二手平台的订单、资料下载、外部链接跳转、卖家设置和调试服务。</p>
         <div class="grid">
           <section class="card">
-            <h2>CSRF 转账</h2>
-            <p>转账接口没有 CSRF token，只依赖 cookie 会话。</p>
-            <p><a class="button" href="/transfer">Open transfer</a></p>
+            <h2>校园币担保交易</h2>
+            <p>买家向卖家支付校园币，确认收货后完成结算。</p>
+            <p><a class="button" href="/transfer">打开交易</a></p>
           </section>
           <section class="card">
-            <h2>路径穿越</h2>
-            <p>文件下载接口没有规范化路径。</p>
-            <p><a class="button" href="/download?file=public.txt">Open download</a></p>
+            <h2>交易凭证下载</h2>
+            <p>下载商品说明、验货记录和交易凭证。</p>
+            <p><a class="button" href="/download?file=public.txt">下载凭证</a></p>
           </section>
           <section class="card">
-            <h2>SSRF</h2>
-            <p>服务端会按用户输入抓取 URL。</p>
-            <p><a class="button" href="/fetch?url=http://127.0.0.1:5001/health">Open fetch</a></p>
+            <h2>外部商品链接预览</h2>
+            <p>卖家可以粘贴商品参考链接，由平台生成预览。</p>
+            <p><a class="button" href="/fetch?url=http://127.0.0.1:5001/health">生成预览</a></p>
           </section>
           <section class="card">
-            <h2>开放重定向</h2>
-            <p>跳转接口直接信任 next 参数。</p>
-            <p><a class="button" href="/redirect?next=/login">Open redirect</a></p>
+            <h2>站外联系跳转</h2>
+            <p>平台会跳转到卖家填写的联系页面。</p>
+            <p><a class="button" href="/redirect?next=/login">打开跳转</a></p>
           </section>
           <section class="card">
-            <h2>批量赋值</h2>
-            <p>资料更新接口允许普通用户提交 role 字段。</p>
-            <p><a class="button" href="/settings">Open settings</a></p>
+            <h2>卖家资料设置</h2>
+            <p>修改邮箱、个人说明和展示信息。</p>
+            <p><a class="button" href="/settings">打开设置</a></p>
           </section>
           <section class="card">
-            <h2>信息泄露</h2>
-            <p>调试接口返回配置、用户和审计日志。</p>
-            <p><a class="button" href="/debug/config">Open debug</a></p>
+            <h2>平台诊断状态</h2>
+            <p>模拟运营后台诊断接口。</p>
+            <p><a class="button" href="/debug/config">查看诊断</a></p>
           </section>
         </div>
         """,
@@ -650,30 +795,31 @@ def transfer():
         for row in transfers
     )
     return page(
-        "CSRF Transfer",
+        "校园币担保交易 - 橙集校园",
         f"""
-        <h1>CSRF 转账实验</h1>
-        <p class="notice">此表单没有 CSRF token，也没有 SameSite/CSP 等保护，适合演示跨站请求伪造风险。</p>
+        <h1>校园币担保交易</h1>
+        <p>买家可以向卖家支付校园币作为线下交易担保。</p>
+        <p class="notice">该交易表单故意没有 CSRF token，保留课程靶场的安全测试点。</p>
         {message}
         <div class="split">
           <section>
             <form method="post">
-              <label>To user</label>
+              <label>收款卖家</label>
               <input name="to_user" value="user2">
-              <label>Amount</label>
+              <label>校园币金额</label>
               <input name="amount" type="number" value="100">
-              <label>Note</label>
-              <input name="note" value="course-demo">
-              <button type="submit">Transfer</button>
+              <label>交易备注</label>
+              <input name="note" value="二手教材当面交易">
+              <button type="submit">提交担保交易</button>
             </form>
           </section>
           <section>
-            <h2>Balances</h2>
-            <table><tr><th>User</th><th>Amount</th></tr>{balance_rows}</table>
+            <h2>账户余额</h2>
+            <table><tr><th>用户</th><th>校园币</th></tr>{balance_rows}</table>
           </section>
         </div>
-        <h2>Recent transfers</h2>
-        <table><tr><th>From</th><th>To</th><th>Amount</th><th>Note</th></tr>{transfer_rows}</table>
+        <h2>最近交易</h2>
+        <table><tr><th>付款方</th><th>收款方</th><th>金额</th><th>备注</th></tr>{transfer_rows}</table>
         """,
         active="advanced",
     )
@@ -694,14 +840,15 @@ def download_file():
         page(
             "Path Traversal Download",
             f"""
-            <h1>路径穿越下载</h1>
-            <p class="notice">接口将用户输入直接拼到文件路径中，没有限制最终路径必须留在 files 目录。</p>
+            <h1>交易凭证下载</h1>
+            <p>下载卖家上传的商品说明、验货照片记录和线下交易凭证。</p>
+            <p class="notice">该下载接口故意把用户输入拼到文件路径中，保留路径穿越测试点。</p>
             <form method="get">
-              <label>File</label>
+              <label>凭证文件</label>
               <input name="file" value="{filename}">
-              <button type="submit">Read file</button>
+              <button type="submit">下载 / 预览</button>
             </form>
-            <p>Resolved path: <code>{target}</code></p>
+            <p>系统解析路径：<code>{target}</code></p>
             <pre>{content}</pre>
             """,
             active="advanced",
@@ -726,14 +873,15 @@ def fetch_url():
             result = f"Fetch failed: {exc}"
 
     return page(
-        "SSRF Fetcher",
+        "外部商品链接预览 - 橙集校园",
         f"""
-        <h1>SSRF URL 抓取</h1>
-        <p class="notice">服务端会根据用户输入发起请求，没有做内网地址、元数据地址或协议目标限制。</p>
+        <h1>外部商品链接预览</h1>
+        <p>卖家可以粘贴参考链接，平台会尝试抓取页面片段生成商品预览。</p>
+        <p class="notice">该功能故意由服务端按用户输入抓取 URL，保留 SSRF 测试点。</p>
         <form method="get">
-          <label>URL</label>
+          <label>参考链接</label>
           <input name="url" value="{url}">
-          <button type="submit">Fetch</button>
+          <button type="submit">生成预览</button>
         </form>
         <pre>{result}</pre>
         """,
@@ -753,8 +901,8 @@ def settings():
         return redirect(url_for("login"))
     if session.get("user_id") == 999:
         return page(
-            "Settings",
-            "<h1>Settings</h1><p>Use user1 or user2 to demonstrate mass assignment.</p>",
+            "卖家资料设置",
+            "<h1>卖家资料设置</h1><p>请使用 user1 或 user2 演示普通卖家的资料编辑流程。</p>",
             active="advanced",
         )
 
@@ -785,26 +933,27 @@ def settings():
         ).fetchone()
 
     return page(
-        "Mass Assignment Settings",
+        "卖家资料设置 - 橙集校园",
         f"""
-        <h1>批量赋值资料更新</h1>
-        <p class="notice">后端直接接收表单字段并更新数据库，普通用户可以提交 <code>role</code> 字段把自己改成 admin。</p>
+        <h1>卖家资料设置</h1>
+        <p>维护卖家联系方式、个人说明和账号展示信息。</p>
+        <p class="notice">该接口故意直接接收表单字段并更新数据库，普通用户可以提交 <code>role</code> 字段。</p>
         {message}
         <form method="post">
-          <label>Username</label>
+          <label>校园账号</label>
           <input value="{user['username']}" disabled>
-          <label>Email</label>
+          <label>联系邮箱</label>
           <input name="email" value="{user['email']}">
-          <label>Note</label>
+          <label>卖家说明</label>
           <input name="note" value="{user['note']}">
-          <label>Role</label>
+          <label>账号身份</label>
           <select name="role">
             <option value="user">user</option>
             <option value="admin">admin</option>
           </select>
-          <label>Plain password recovery field</label>
+          <label>找回密码备注字段</label>
           <input name="plain_password" value="{user['plain_password']}">
-          <button type="submit">Save settings</button>
+          <button type="submit">保存卖家资料</button>
         </form>
         """,
         active="advanced",
@@ -837,7 +986,7 @@ def debug_config():
 @app.get("/lab")
 def lab_home() -> str:
     return page(
-        "Lab Controls",
+        "靶场控制 - 橙集校园",
         """
         <h1>靶场控制台</h1>
         <p class="notice">这些入口只用于本地课程演示，方便扫描器前端和规则迭代时获得稳定状态。</p>
@@ -845,21 +994,21 @@ def lab_home() -> str:
           <section class="card">
             <h2>Health</h2>
             <p><code>GET /health</code></p>
-            <p>返回 JSON，便于前端判断靶场是否启动。</p>
-            <p><a class="button" href="/health">Open health</a></p>
+            <p>返回 JSON，便于前端判断交易平台是否启动。</p>
+            <p><a class="button" href="/health">打开健康检查</a></p>
           </section>
           <section class="card">
             <h2>Debug Session</h2>
             <p><code>/lab/debug/session?token=lab-backdoor-token</code></p>
-            <p>仅本机可用，创建 admin 会话。</p>
-            <p><a class="button" href="/lab/debug/session?token=lab-backdoor-token">Create session</a></p>
+            <p>仅本机可用，创建平台运营会话。</p>
+            <p><a class="button" href="/lab/debug/session?token=lab-backdoor-token">创建调试会话</a></p>
           </section>
           <section class="card">
             <h2>Reset Data</h2>
             <p><code>POST /lab/reset</code></p>
             <form method="post" action="/lab/reset">
               <input type="hidden" name="token" value="lab-backdoor-token">
-              <button type="submit">Reset database</button>
+              <button type="submit">重置演示数据</button>
             </form>
           </section>
         </div>
@@ -876,7 +1025,7 @@ def health():
     return jsonify(
         {
             "status": "ok",
-            "service": "vulnerable-test-site",
+            "service": "campus-secondhand-market",
             "users": users,
             "comments": comments_count,
         }
@@ -912,9 +1061,9 @@ def lab_reset():
     return page(
         "Lab reset",
         """
-        <h1>Database reset</h1>
-        <p class="ok">Demo users and comments have been restored.</p>
-        <p><a class="button" href="/">Back home</a></p>
+        <h1>演示数据已重置</h1>
+        <p class="ok">用户、商品留言和交易记录已恢复为初始状态。</p>
+        <p><a class="button" href="/">返回首页</a></p>
         """,
         active="lab",
     )
