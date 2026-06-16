@@ -750,12 +750,26 @@ dd {
   overflow: hidden;
 }
 
+.event-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .event-list {
   position: relative;
   z-index: 1;
   display: grid;
   gap: 10px;
   margin-top: 18px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.event-list.collapsed {
+  max-height: 284px;
 }
 
 .event-item {
@@ -823,6 +837,28 @@ dd {
   grid-column: 1 / -1;
   padding: 14px;
   min-width: 0;
+}
+
+.scan-result-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.scan-result-actions h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.scan-result-actions p {
+  margin: 0;
+  color: var(--muted);
 }
 
 .summary-grid {
@@ -1111,6 +1147,24 @@ input[type="checkbox"] {
   font-size: 15px;
 }
 
+.evidence-toggle {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.evidence-toggle summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.evidence-toggle .detail-copy {
+  margin-top: 10px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
 .detail-copy {
   color: var(--text-soft);
   line-height: 1.75;
@@ -1162,7 +1216,7 @@ input[type="checkbox"] {
   height: calc(100vh - 140px);
   place-items: center;
   color: var(--muted);
-  content: "点击漏洞行查看详情";
+  content: attr(data-empty-copy);
 }
 
 .empty-state {
@@ -1331,6 +1385,44 @@ input[type="checkbox"] {
   border: 1px solid rgba(47, 140, 255, 0.26);
   border-radius: 8px;
   background: rgba(47, 140, 255, 0.08);
+}
+
+.markdown-body {
+  color: var(--text-soft);
+  line-height: 1.75;
+}
+
+.markdown-body p,
+.markdown-body ol,
+.markdown-body ul {
+  margin: 0 0 12px;
+}
+
+.markdown-body ol,
+.markdown-body ul {
+  padding-left: 22px;
+}
+
+.markdown-body li {
+  margin: 6px 0;
+}
+
+.markdown-body h4 {
+  margin: 16px 0 8px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.markdown-body strong {
+  color: #f4f8ff;
+}
+
+.markdown-body code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: #9fd1ff;
+  background: rgba(47, 140, 255, 0.14);
+  font-family: "JetBrains Mono", Consolas, monospace;
 }
 
 .feature-page {

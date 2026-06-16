@@ -47,7 +47,7 @@ SCAN_STEPS = [
     "XSS 测试",
     "越权访问测试",
     "静态源码扫描",
-    "AI 修复建议",
+    "生成 AI 建议",
     "生成报告",
 ]
 
@@ -868,7 +868,7 @@ def _run_task(task_id: str) -> None:
                 current_step = "静态源码扫描"
             elif "修复建议" in message:
                 step_index = 5
-                current_step = "AI 修复建议"
+                current_step = "生成 AI 建议"
             elif "报告" in message:
                 step_index = 6
                 current_step = "生成报告"
@@ -1040,6 +1040,9 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path.startswith("/api/assets/") and parsed.path.endswith("/scan"):
             self._handle_asset_scan(parsed.path)
+            return
+        if parsed.path.startswith("/api/report/") and parsed.path.endswith("/regenerate"):
+            self._handle_report_regenerate(parsed.path)
             return
         if parsed.path.startswith("/api/vulnerability/") and parsed.path.endswith("/ai-advice"):
             self._handle_ai_advice(parsed.path)
@@ -1369,6 +1372,29 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Report not found"}, HTTPStatus.NOT_FOUND)
             return
         self._send_json({"task_id": task_id, "deleted": True})
+
+    def _handle_report_regenerate(self, path: str) -> None:
+        task_id = path.strip("/").split("/")[2]
+        with TASK_LOCK:
+            task = TASKS.get(task_id)
+            result = task.get("result") if task else None
+            if task is None or result is None:
+                self._send_json({"error": "Completed scan result not found"}, HTTPStatus.NOT_FOUND)
+                return
+            result["reports"] = {
+                "markdown": generate_markdown_report(result),
+                "html": generate_html_report(result),
+                "markdown_url": f"/api/report/{task_id}/markdown",
+                "html_url": f"/api/report/{task_id}/html",
+            }
+            _save_report_locked(task)
+            report = {
+                "task_id": task_id,
+                "markdown_url": result["reports"]["markdown_url"],
+                "html_url": result["reports"]["html_url"],
+                "regenerated_at": _timestamp(),
+            }
+        self._send_json(report)
 
     def _handle_ai_key_update(self) -> None:
         payload = self._read_json()

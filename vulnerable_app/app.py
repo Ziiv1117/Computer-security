@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
-from flask import Flask, jsonify, redirect, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, request, session, url_for
 
 
 app = Flask(__name__)
@@ -36,32 +36,56 @@ DEFAULT_COMMENTS = [
 
 FEATURED_PRODUCTS = [
     {
+        "slug": "mountain-bike",
         "title": "九成新山地车",
         "price": "￥320",
         "tag": "东区宿舍",
         "seller": "user1",
         "desc": "通勤代步，刹车和变速都正常，送车锁。",
+        "detail": "这台山地车主要用于校内通勤，车架无明显变形，刹车、变速和车铃都能正常使用。前后轮胎近期补过气，适合宿舍到教学楼、图书馆之间短途骑行。支持在东区宿舍门口当面看车，确认后再交易。",
+        "condition": "九成新，正常使用痕迹",
+        "delivery": "东区宿舍线下自提，可当面试骑",
+        "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Mountain%20bike%20across%20a%20road%20(Unsplash).jpg",
+        "image_credit": "Wikimedia Commons / Unsplash CC0",
     },
     {
+        "slug": "english-books",
         "title": "考研英语资料全套",
         "price": "￥45",
         "tag": "图书馆自取",
         "seller": "user2",
         "desc": "含真题、单词书和笔记，适合备考同学。",
+        "detail": "资料包含近年真题、单词书、阅读专项练习和个人整理的复习笔记。部分页面有荧光笔标记，但不影响阅读。适合刚开始准备考研英语、想低成本补齐基础资料的同学。",
+        "condition": "有少量批注，整体完整",
+        "delivery": "图书馆一楼自取，支持现场翻看",
+        "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Libros%20de%20papel.jpg",
+        "image_credit": "Wikimedia Commons",
     },
     {
+        "slug": "mini-fridge",
         "title": "宿舍小冰箱",
         "price": "￥180",
         "tag": "南区 5 栋",
         "seller": "admin",
         "desc": "容量 46L，制冷正常，毕业出清。",
+        "detail": "46L 小冰箱，适合宿舍存放饮料、水果和简餐。制冷功能正常，运行声音较低，外壳有轻微搬运痕迹。因毕业搬离宿舍出清，建议买家自备小推车或找同学一起搬运。",
+        "condition": "功能正常，外观轻微磨损",
+        "delivery": "南区 5 栋楼下交易，需自提",
+        "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Haier%20Mini%20Refridgerator.JPG",
+        "image_credit": "Wikimedia Commons",
     },
     {
+        "slug": "mechanical-keyboard",
         "title": "机械键盘 87 键",
         "price": "￥99",
         "tag": "计算机学院",
         "seller": "user1",
         "desc": "茶轴，有轻微使用痕迹，支持当面验货。",
+        "detail": "87 键茶轴机械键盘，适合写代码、办公和日常打字。按键触发正常，键帽有轻微使用痕迹，随键盘附带数据线。支持在计算机学院大厅当面插电脑测试。",
+        "condition": "轻微使用痕迹，按键正常",
+        "delivery": "计算机学院大厅当面验货",
+        "image": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Mechanical%20Keyboard.jpg",
+        "image_credit": "Wikimedia Commons",
     },
 ]
 
@@ -177,6 +201,10 @@ def current_user_label() -> str:
     if username:
         return f"{username} ({role})"
     return "guest"
+
+
+def find_product(slug: str) -> dict | None:
+    return next((item for item in FEATURED_PRODUCTS if item["slug"] == slug), None)
 
 
 def page(title: str, body: str, active: str = "") -> str:
@@ -360,9 +388,25 @@ def page(title: str, body: str, active: str = "") -> str:
           gap: 10px;
           min-height: 190px;
         }}
+        .product-card strong {{
+          display: block;
+          margin-top: 2px;
+          line-height: 1.3;
+        }}
+        .product-card-link {{
+          color: inherit;
+          text-decoration: none;
+          transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+        }}
+        .product-card-link:hover {{
+          transform: translateY(-2px);
+          border-color: rgba(255, 106, 0, 0.45);
+          box-shadow: 0 12px 26px rgba(78, 52, 22, 0.12);
+        }}
         .product-cover {{
-          height: 96px;
+          height: 150px;
           border-radius: 10px;
+          overflow: hidden;
           background:
             linear-gradient(135deg, rgba(255, 106, 0, 0.24), rgba(50, 184, 112, 0.18)),
             #f7eee1;
@@ -370,6 +414,53 @@ def page(title: str, body: str, active: str = "") -> str:
           place-items: center;
           color: #9a5a00;
           font-weight: 800;
+        }}
+        .product-cover img {{
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          border-radius: inherit;
+          display: block;
+        }}
+        .product-detail {{
+          display: grid;
+          grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+          gap: 22px;
+          align-items: start;
+        }}
+        .product-photo {{
+          min-height: 360px;
+          border-radius: 18px;
+          overflow: hidden;
+          border: 1px solid var(--line);
+          background:
+            linear-gradient(135deg, rgba(255, 106, 0, 0.18), rgba(50, 184, 112, 0.16)),
+            #f7eee1;
+          display: grid;
+          place-items: center;
+          color: #9a5a00;
+          font-weight: 800;
+          text-align: center;
+        }}
+        .product-photo img {{
+          width: 100%;
+          height: 100%;
+          min-height: 360px;
+          object-fit: cover;
+          display: block;
+        }}
+        .detail-list {{
+          display: grid;
+          grid-template-columns: 96px minmax(0, 1fr);
+          gap: 10px 12px;
+          margin: 18px 0;
+        }}
+        .detail-list dt {{
+          color: var(--muted);
+        }}
+        .detail-list dd {{
+          margin: 0;
+          font-weight: 700;
         }}
         .price {{ color: var(--brand); font-size: 22px; font-weight: 900; }}
         .tag {{
@@ -429,6 +520,7 @@ def page(title: str, body: str, active: str = "") -> str:
         }}
         @media (max-width: 780px) {{
           .split {{ grid-template-columns: 1fr; }}
+          .product-detail {{ grid-template-columns: 1fr; }}
           .hero {{ grid-template-columns: 1fr; }}
           .hero-main h1 {{ font-size: 30px; }}
         }}
@@ -452,14 +544,14 @@ def page(title: str, body: str, active: str = "") -> str:
 def index() -> str:
     product_cards = "\n".join(
         f"""
-        <section class="card product-card">
-          <div class="product-cover">{item["title"]}</div>
+        <a class="card product-card product-card-link" href="/products/{item["slug"]}" aria-label="查看 {item["title"]} 详情">
+          <div class="product-cover"><img src="{item["image"]}" alt="{item["title"]}"></div>
           <strong>{item["title"]}</strong>
           <span class="price">{item["price"]}</span>
           <span class="tag">{item["tag"]}</span>
           <p>{item["desc"]}</p>
-          <p class="meta">卖家：{item["seller"]} · 支持线下验货</p>
-        </section>
+          <p class="meta">卖家：{item["seller"]} · 支持线下验货 · 查看详情</p>
+        </a>
         """
         for item in FEATURED_PRODUCTS
     )
@@ -496,7 +588,44 @@ def index() -> str:
           <tr><td><code>user2</code></td><td><code>123456</code></td><td>普通学生</td><td>个人主页越权演示</td></tr>
           <tr><td><code>lab_backdoor</code></td><td><code>letmein-lab</code></td><td>本地调试</td><td>课程靶场辅助登录</td></tr>
         </table>
-        <p class="notice">说明：这是本地授权课程靶场。页面伪装成正常交易平台，但保留故意设计的漏洞测试点。</p>
+        """,
+        active="home",
+    )
+
+
+@app.get("/products/<slug>")
+def product_detail(slug: str) -> str:
+    product = find_product(slug)
+    if product is None:
+        abort(404)
+
+    return page(
+        f"{product['title']} - 橙集校园",
+        f"""
+        <p><a href="/">← 返回推荐闲置</a></p>
+        <section class="product-detail">
+          <div>
+            <div class="product-photo">
+              <img src="{product["image"]}" alt="{product["title"]}">
+            </div>
+          </div>
+          <article class="card">
+            <span class="tag">{product["tag"]}</span>
+            <h1>{product["title"]}</h1>
+            <p class="price">{product["price"]}</p>
+            <p>{product["detail"]}</p>
+            <dl class="detail-list">
+              <dt>卖家</dt><dd>{product["seller"]}</dd>
+              <dt>成色</dt><dd>{product["condition"]}</dd>
+              <dt>交易方式</dt><dd>{product["delivery"]}</dd>
+              <dt>验货</dt><dd>支持线下当面确认</dd>
+            </dl>
+            <p>
+              <a class="button" href="/comments">留言咨询</a>
+              <a class="button secondary" href="/profile/2">查看卖家主页</a>
+            </p>
+          </article>
+        </section>
         """,
         active="home",
     )

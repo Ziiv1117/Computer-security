@@ -12,6 +12,11 @@ let latestReports = {};
 let latestRisk = null;
 let backendConnected = false;
 let currentProgress = 0;
+let displayedProgress = 0;
+let progressTarget = 0;
+let progressAnimationFrame = 0;
+let progressAnimationStart = 0;
+let progressAnimationFrom = 0;
 let currentScanTitle = "等待扫描";
 let currentScanSubtitle = "点击开始扫描后，会从后端同步真实扫描进度。";
 let taskRecords = [];
@@ -33,7 +38,7 @@ let modules = [
   { name: "XSS 测试" },
   { name: "越权访问测试" },
   { name: "静态源码扫描" },
-  { name: "AI 修复建议" },
+  { name: "生成 AI 建议" },
   { name: "生成报告" },
 ];
 
@@ -43,7 +48,7 @@ let scanSteps = [
   { name: "XSS 测试", time: "等待中", status: "pending" },
   { name: "越权访问测试", time: "等待中", status: "pending" },
   { name: "静态源码扫描", time: "等待中", status: "pending" },
-  { name: "AI 修复建议", time: "等待中", status: "pending" },
+  { name: "生成 AI 建议", time: "等待中", status: "pending" },
   { name: "生成报告", time: "等待中", status: "pending" },
 ];
 
@@ -57,7 +62,9 @@ let selectedVulnerabilityId = vulnerabilities[0]?.id ?? "";
 let currentFilter = "全部";
 let currentStatus = "全部状态";
 let drawerOpen = true;
+let eventStreamExpanded = false;
 let initialWorkspaceTemplate = "";
+const collapsedEventLimit = 8;
 
 const riskClass = (risk) => String(risk || "low").toLowerCase();
 const statusClass = (status) => {
@@ -77,6 +84,10 @@ const selectedItem = () =>
   vulnerabilities[0] ??
   null;
 
+function setDrawerClosedCopy(copy) {
+  document.querySelector(".detail-drawer")?.setAttribute("data-empty-copy", copy);
+}
+
 function currentTime() {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
@@ -88,6 +99,67 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderInlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderMarkdownLite(value) {
+  const lines = String(value || "").split(/\r?\n/);
+  const html = [];
+  let listMode = "";
+  const closeList = () => {
+    if (listMode) {
+      html.push(`</${listMode}>`);
+      listMode = "";
+    }
+  };
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      closeList();
+      return;
+    }
+
+    const heading = line.match(/^#{1,4}\s+(.+)$/);
+    if (heading) {
+      closeList();
+      html.push(`<h4>${renderInlineMarkdown(heading[1])}</h4>`);
+      return;
+    }
+
+    const ordered = line.match(/^\d+\.\s+(.+)$/);
+    if (ordered) {
+      if (listMode !== "ol") {
+        closeList();
+        html.push("<ol>");
+        listMode = "ol";
+      }
+      html.push(`<li>${renderInlineMarkdown(ordered[1])}</li>`);
+      return;
+    }
+
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      if (listMode !== "ul") {
+        closeList();
+        html.push("<ul>");
+        listMode = "ul";
+      }
+      html.push(`<li>${renderInlineMarkdown(bullet[1])}</li>`);
+      return;
+    }
+
+    closeList();
+    html.push(`<p>${renderInlineMarkdown(line)}</p>`);
+  });
+
+  closeList();
+  return html.join("") || "<p>暂无建议。</p>";
 }
 
 function apiUrl(path) {
@@ -123,6 +195,10 @@ function normalizeStepStatus(status) {
     return "active";
   }
   return status || "pending";
+}
+
+function displayStepName(name) {
+  return name === "AI 修复建议" ? "生成 AI 建议" : name;
 }
 
 function mapApiVulnerability(item) {
@@ -171,6 +247,41 @@ function safeRiskBadge(risk) {
 
 function latestTask() {
   return taskRecords[0] || null;
+}
+
+function groupedVulnerabilities() {
+  const riskRank = { Critical: 4, High: 3, Medium: 2, Low: 1 };
+  const groups = new Map();
+  vulnerabilities.forEach((item) => {
+    const component = item.component || item.location || "unknown";
+    const key = `${item.type}|${component}`;
+    const group = groups.get(key) || {
+      type: item.type,
+      component,
+      count: 0,
+      highestRisk: item.risk || "Low",
+      firstId: item.id,
+      p0p1: 0,
+      open: 0,
+      methods: new Set(),
+      locations: new Set(),
+    };
+    group.count += 1;
+    group.methods.add(item.method || "UNKNOWN");
+    group.locations.add(item.location || "unknown");
+    if ((riskRank[item.risk] || 0) > (riskRank[group.highestRisk] || 0)) {
+      group.highestRisk = item.risk;
+      group.firstId = item.id;
+    }
+    if (["P0", "P1"].includes(item.remediationPriority || "")) {
+      group.p0p1 += 1;
+    }
+    if (!["已修复", "已忽略", "误报"].includes(item.status)) {
+      group.open += 1;
+    }
+    groups.set(key, group);
+  });
+  return [...groups.values()].sort((a, b) => b.p0p1 - a.p0p1 || b.count - a.count);
 }
 
 function updateBackendStatusPanel() {
@@ -238,16 +349,50 @@ function renderTargetInfo() {
   );
 }
 
+function paintProgress(value) {
+  const rounded = Math.round(Math.max(0, Math.min(100, Number(value) || 0)));
+  const progressValue = document.querySelector("#progressValue");
+  if (progressValue) {
+    progressValue.innerHTML = `${rounded}<span>%</span>`;
+  }
+  const radar = document.querySelector(".radar");
+  if (radar) {
+    radar.style.setProperty("--progress", `${rounded}%`);
+    radar.setAttribute("aria-label", `扫描进度 ${rounded}%`);
+  }
+}
+
+function animateProgressTo(target) {
+  progressTarget = Math.max(0, Math.min(100, Number(target) || 0));
+  progressAnimationFrom = displayedProgress;
+  progressAnimationStart = performance.now();
+  if (progressAnimationFrame) {
+    return;
+  }
+
+  const tick = (now) => {
+    const distance = Math.abs(progressTarget - progressAnimationFrom);
+    const duration = Math.min(2000, Math.max(500, distance * 18));
+    const t = duration ? Math.min(1, (now - progressAnimationStart) / duration) : 1;
+    displayedProgress = progressAnimationFrom + (progressTarget - progressAnimationFrom) * t;
+    paintProgress(displayedProgress);
+    if (t >= 1) {
+      displayedProgress = progressTarget;
+      paintProgress(displayedProgress);
+      progressAnimationFrame = 0;
+      return;
+    }
+    progressAnimationFrame = window.requestAnimationFrame(tick);
+  };
+  progressAnimationFrame = window.requestAnimationFrame(tick);
+}
+
 function updateProgress(progress = 0, title = "等待扫描", subtitle = "启动后会从后端扫描任务同步状态。") {
   const value = Math.max(0, Math.min(100, Number(progress) || 0));
   currentProgress = value;
   currentScanTitle = title;
   currentScanSubtitle = subtitle;
-  const progressValue = document.querySelector("#progressValue");
-  if (progressValue) {
-    progressValue.innerHTML = `${value}<span>%</span>`;
-  }
-  document.querySelector(".radar")?.setAttribute("aria-label", `扫描进度 ${value}%`);
+  animateProgressTo(value);
   const heading = document.querySelector(".scan-heading h1");
   const copy = document.querySelector(".scan-heading p");
   if (heading) {
@@ -265,10 +410,18 @@ function renderAllScanData() {
   renderEvents();
   renderSummary();
   renderRows();
-  renderDetail();
+  renderScanSummaryDrawer();
 }
 
 function resetScanWorkspace() {
+  if (progressAnimationFrame) {
+    window.cancelAnimationFrame(progressAnimationFrame);
+    progressAnimationFrame = 0;
+  }
+  displayedProgress = 0;
+  progressTarget = 0;
+  progressAnimationStart = 0;
+  progressAnimationFrom = 0;
   activeTaskId = "";
   latestReports = {};
   latestRisk = null;
@@ -285,16 +438,16 @@ function syncStatus(status) {
   activeTaskId = status.task_id || activeTaskId;
   scanTarget = status.target || scanTarget;
   scanSteps = (status.steps || scanSteps).map((step) => ({
-    name: step.name,
+    name: displayStepName(step.name),
     time: step.duration || step.time || "等待中",
     status: normalizeStepStatus(step.status),
   }));
-  events = (status.events || []).map((event) => ({
+  events = normalizeEventList((status.events || []).map((event) => ({
     time: event.time || currentTime(),
     level: event.level || "INFO",
     text: event.message || event.text || "",
-  }));
-  const runningModule = status.current_step || "扫描任务";
+  })));
+  const runningModule = displayStepName(status.current_step || "扫描任务");
   modules = modules.map((module) => ({
     ...module,
     state: module.name.includes(runningModule) || runningModule.includes(module.name) ? "进行中" : undefined,
@@ -302,7 +455,7 @@ function syncStatus(status) {
   updateProgress(
     status.progress,
     status.status === "completed" ? "扫描完成" : "扫描进行中",
-    status.current_step ? `当前阶段：${status.current_step}` : "后端扫描任务正在运行。",
+    status.current_step ? `当前阶段：${displayStepName(status.current_step)}` : "后端扫描任务正在运行。",
   );
   renderAllScanData();
 }
@@ -314,7 +467,7 @@ async function syncResult(result) {
   vulnerabilities = (result.vulnerabilities || []).map(mapApiVulnerability);
   selectedVulnerabilityId = vulnerabilities[0]?.id ?? "";
   if (result.errors?.length) {
-    result.errors.forEach((error) => addEvent("WARN", error));
+    appendResultErrors(result.errors);
   }
   await loadPlatformData();
   renderAllScanData();
@@ -464,12 +617,48 @@ async function saveAiKey(provider, apiKey, model) {
     runtime_provider: settings.runtime_ai_provider || provider,
     model: settings.ai_model || model || "qwen3.6-flash",
   };
-  addEvent("INFO", `AI 修复建议已配置为 ${provider.toUpperCase()} / ${aiSettings.model}`);
+  addEvent("INFO", `AI 建议接口已配置为 ${provider.toUpperCase()} / ${aiSettings.model}`);
   return settings;
 }
 
+function eventSignature(event) {
+  return `${event.level}|${String(event.text || "").replace(/\bVULN-\d+\b/g, "VULN-*")}`;
+}
+
+function normalizeEventList(rawEvents, limit = 50) {
+  const normalized = [];
+  rawEvents.forEach((event) => {
+    const next = {
+      time: event.time || currentTime(),
+      level: event.level || "INFO",
+      text: event.text || event.message || "",
+      count: Number(event.count || 1),
+    };
+    const previous = normalized[normalized.length - 1];
+    if (previous && eventSignature(previous) === eventSignature(next)) {
+      previous.count = (previous.count || 1) + (next.count || 1);
+      previous.time = next.time;
+      return;
+    }
+    normalized.push(next);
+  });
+  return normalized.slice(-limit);
+}
+
+function appendResultErrors(errors) {
+  const aiFallbacks = errors.filter((error) => /^AI advice fallback for VULN-\d+:/i.test(error));
+  const otherErrors = errors.filter((error) => !/^AI advice fallback for VULN-\d+:/i.test(error));
+  if (aiFallbacks.length) {
+    addEvent("WARN", `${aiFallbacks.length} 个漏洞的 AI 建议接口失败，已使用本地模板兜底`);
+  }
+  otherErrors.slice(0, 5).forEach((error) => addEvent("WARN", error));
+  if (otherErrors.length > 5) {
+    addEvent("WARN", `还有 ${otherErrors.length - 5} 条错误已折叠，请查看后端任务日志`);
+  }
+}
+
 function addEvent(level, text) {
-  events = [...events, { time: currentTime(), level, text }].slice(-14);
+  events = normalizeEventList([...events, { time: currentTime(), level, text }]);
   renderEvents();
 }
 
@@ -537,18 +726,31 @@ function renderEvents() {
   if (!list) {
     return;
   }
+  const toggleButton = document.querySelector("#toggleEventsButton");
   if (!events.length) {
     list.innerHTML = `<div class="empty-state">暂无扫描事件。启动一次后端扫描后，这里会显示真实事件流。</div>`;
+    list.classList.add("collapsed");
+    if (toggleButton) {
+      toggleButton.textContent = "展开全部";
+      toggleButton.disabled = true;
+    }
     return;
   }
 
-  list.innerHTML = events
+  const visibleEvents = eventStreamExpanded ? events : events.slice(-collapsedEventLimit);
+  list.classList.toggle("collapsed", !eventStreamExpanded);
+  if (toggleButton) {
+    toggleButton.disabled = events.length <= collapsedEventLimit;
+    toggleButton.textContent = eventStreamExpanded ? "收起" : `展开全部 (${events.length})`;
+  }
+
+  list.innerHTML = visibleEvents
     .map(
       (event) => `
         <div class="event-item">
           <time>${event.time}</time>
           <span class="event-level ${event.level.toLowerCase()}">${event.level}</span>
-          <span>${event.text}</span>
+          <span>${event.text}${event.count > 1 ? ` ×${event.count}` : ""}</span>
         </div>
       `,
     )
@@ -737,7 +939,7 @@ function renderRows() {
         "更多操作",
         `<div class="modal-actions">
           <button data-modal-action="advice">生成修复建议</button>
-          <button data-modal-action="export">预览报告</button>
+          <button data-modal-action="export">查看报告</button>
           <button data-modal-action="fixed">标记为已修复</button>
         </div>`,
       );
@@ -766,9 +968,22 @@ function updateBulkSelectionUi() {
 function selectVulnerability(id) {
   selectedVulnerabilityId = id;
   drawerOpen = true;
+  setDrawerClosedCopy("点击漏洞行查看详情");
+  document.querySelector(".drawer-header h2").textContent = "漏洞详情";
   document.querySelector(".detail-drawer").classList.remove("drawer-closed");
   renderRows();
   renderDetail();
+}
+
+function openVulnerabilityDetail(id) {
+  selectedVulnerabilityId = id;
+  drawerOpen = true;
+  setDrawerClosedCopy("点击漏洞行查看详情");
+  document.querySelector(".drawer-header h2").textContent = "漏洞详情";
+  document.querySelector(".detail-drawer").classList.remove("drawer-closed");
+  renderRows();
+  renderDetail();
+  showToast(`已打开 ${selectedVulnerabilityId} 的漏洞详情`);
 }
 
 function openAiFixForVulnerability(id) {
@@ -776,7 +991,7 @@ function openAiFixForVulnerability(id) {
   setActiveNavigation("ai-fix");
   history.replaceState(null, "", "#ai-fix");
   renderFeaturePage("ai-fix");
-  showToast(`已打开 ${selectedVulnerabilityId} 的 AI 修复详情`);
+  showToast(`已打开 ${selectedVulnerabilityId} 的 AI 建议详情`);
 }
 
 function renderDetail() {
@@ -836,15 +1051,18 @@ function renderDetail() {
 
     ${item.payload ? `
     <section class="detail-card">
-      <h4>测试输入</h4>
-      <p class="detail-copy">${escapeHtml(item.payload)}</p>
+      <h4>原始证据</h4>
+      <details class="evidence-toggle">
+        <summary>展开查看测试输入</summary>
+        <p class="detail-copy">${escapeHtml(item.payload)}</p>
+      </details>
     </section>
     ` : ""}
 
     <div class="drawer-actions">
       <button class="drawer-action primary" data-detail-action="view">查看详情</button>
       <button class="drawer-action warning" data-detail-action="advice">生成修复建议</button>
-      <button class="drawer-action info" data-detail-action="export">预览报告</button>
+      <button class="drawer-action info" data-detail-action="export">查看报告</button>
       <button class="drawer-action muted" data-detail-action="status:修复中">修复中</button>
       <button class="drawer-action muted" data-detail-action="status:已修复">已修复</button>
       <button class="drawer-action muted" data-detail-action="status:已忽略">已忽略</button>
@@ -877,7 +1095,7 @@ function showVulnerabilityModal() {
       <div><dt>证据数量</dt><dd>${escapeHtml(item.evidence)}</dd></div>
     </dl>
     <p class="modal-copy">${escapeHtml(item.description)}</p>
-    ${item.payload ? `<div class="code-suggestion"><strong>测试输入</strong><span>${escapeHtml(item.payload)}</span></div>` : ""}
+    ${item.payload ? `<div class="code-suggestion"><strong>原始证据</strong><span>默认隐藏，需在漏洞详情抽屉中展开查看。</span></div>` : ""}
     ${item.evidenceText ? `<div class="code-suggestion"><strong>检测证据</strong><span>${escapeHtml(item.evidenceText)}</span></div>` : ""}`,
   );
 }
@@ -885,7 +1103,7 @@ function showVulnerabilityModal() {
 async function showAdviceModal() {
   const item = selectedItem();
   if (!item) {
-    showModal("AI 修复建议", `<p class="modal-copy">当前没有可生成建议的漏洞记录。</p>`);
+    showModal("AI 建议", `<p class="modal-copy">当前没有可生成建议的漏洞记录。</p>`);
     return;
   }
   if (activeTaskId) {
@@ -900,10 +1118,10 @@ async function showAdviceModal() {
       addEvent("WARN", `AI 建议接口调用失败，使用当前建议：${error.message}`);
     }
   }
-  addEvent("INFO", `已为 ${item.id} 生成 AI 修复建议`);
+  addEvent("INFO", `已为 ${item.id} 生成 AI 建议`);
   showModal(
-    "AI 修复建议",
-    `<p class="modal-copy">${escapeHtml(item.advice)}</p>
+    "AI 建议",
+    `<div class="markdown-body">${renderMarkdownLite(item.advice)}</div>
     <div class="code-suggestion">
       <strong>调用路径</strong>
       <span>后端接口 /api/vulnerability/${escapeHtml(item.id)}/ai-advice</span>
@@ -917,7 +1135,7 @@ async function showAdviceModal() {
       <span>${escapeHtml(item.risk === "Critical" ? "立即修复" : "本轮迭代修复")}</span>
     </div>`,
   );
-  showToast("AI 修复建议已生成");
+  showToast("AI 建议已生成");
 }
 
 function exportReport() {
@@ -930,7 +1148,7 @@ function exportReport() {
     return;
   }
   if (!item) {
-    showModal("预览报告", `<p class="modal-copy">当前没有可预览的扫描报告。</p>`);
+    showModal("查看报告", `<p class="modal-copy">当前没有可查看的扫描报告。</p>`);
     return;
   }
   const report = `# 安全扫描报告
@@ -944,7 +1162,6 @@ function exportReport() {
 - 检测方式：${item.method}
 - 请求方法：${item.requestMethod || "-"}
 - 扫描规则：${item.scannerRule || "-"}
-- 测试输入：${item.payload || "-"}
 - 修复优先级：${item.remediationPriority || "P3"}
 - 状态：${item.status}
 
@@ -952,7 +1169,7 @@ function exportReport() {
 
 ${item.description}
 
-## AI 修复建议
+## AI 建议
 
 建议来源：${item.adviceSource || "unknown"}
 
@@ -1038,6 +1255,55 @@ function runDetailAction(action) {
   actions[action]?.();
 }
 
+function renderScanSummaryDrawer() {
+  const detail = document.querySelector("#detailContent");
+  if (!detail) {
+    return;
+  }
+  const latest = latestTask();
+  const counts = vulnerabilities.reduce(
+    (acc, item) => {
+      acc.total += 1;
+      const risk = riskClass(item.risk);
+      if (risk in acc) {
+        acc[risk] += 1;
+      }
+      return acc;
+    },
+    { total: 0, critical: 0, high: 0, medium: 0, low: 0 },
+  );
+  const progress = Number.isFinite(Number(latest?.progress)) ? Number(latest.progress) : currentProgress;
+  const taskId = activeTaskId || latest?.task_id || "-";
+
+  detail.innerHTML = `
+    <section class="detail-card">
+      <h4>当前扫描</h4>
+      <dl class="detail-list">
+        <div><dt>任务</dt><dd>${escapeHtml(taskId)}</dd></div>
+        <div><dt>状态</dt><dd>${latest ? statusLabel(latest.status) : currentScanTitle}</dd></div>
+        <div><dt>进度</dt><dd>${escapeHtml(Math.round(progress))}%</dd></div>
+        <div><dt>目标</dt><dd>${escapeHtml(scanTarget.base_url)}</dd></div>
+        <div><dt>源码</dt><dd>${escapeHtml(scanTarget.project_path)}</dd></div>
+      </dl>
+    </section>
+    <section class="detail-card">
+      <h4>风险摘要</h4>
+      <dl class="detail-list">
+        <div><dt>总漏洞</dt><dd>${counts.total}</dd></div>
+        <div><dt>Critical</dt><dd>${counts.critical}</dd></div>
+        <div><dt>High</dt><dd>${counts.high}</dd></div>
+        <div><dt>Medium</dt><dd>${counts.medium}</dd></div>
+        <div><dt>Low</dt><dd>${counts.low}</dd></div>
+      </dl>
+    </section>
+    <section class="detail-card">
+      <h4>查看漏洞</h4>
+      <p class="detail-copy">扫描页只展示执行状态和实时事件。具体漏洞证据、筛选、分组和状态流转在漏洞管理中处理。</p>
+      <button type="button" class="drawer-action info" id="scanDrawerOpenVulns">进入漏洞管理</button>
+    </section>
+  `;
+}
+
 function bindScanPageControls() {
   document.querySelector("#editTargetButton")?.addEventListener("click", () => {
     showModal(
@@ -1066,8 +1332,27 @@ function bindScanPageControls() {
 
   document.querySelector("#startScanButton")?.addEventListener("click", startBackendScan);
 
+  document.querySelector("#openVulnerabilityManagementButton")?.addEventListener("click", () => {
+    setActiveNavigation("vulnerabilities");
+    history.replaceState(null, "", "#vulnerabilities");
+    renderFeaturePage("vulnerabilities");
+  });
+
+  document.querySelector("#scanDrawerOpenVulns")?.addEventListener("click", () => {
+    setActiveNavigation("vulnerabilities");
+    history.replaceState(null, "", "#vulnerabilities");
+    renderFeaturePage("vulnerabilities");
+  });
+
+  document.querySelector("#toggleEventsButton")?.addEventListener("click", () => {
+    eventStreamExpanded = !eventStreamExpanded;
+    renderEvents();
+    showToast(eventStreamExpanded ? "已展开实时事件流" : "已收起实时事件流");
+  });
+
   document.querySelector("#clearEventsButton")?.addEventListener("click", () => {
     events = [];
+    eventStreamExpanded = false;
     renderEvents();
     showToast("实时事件流已清空");
   });
@@ -1121,8 +1406,10 @@ function bindScanPageControls() {
 
 function renderScanPage() {
   document.querySelector(".workspace").innerHTML = initialWorkspaceTemplate;
-  document.querySelector(".drawer-header h2").textContent = "漏洞详情";
+  setDrawerClosedCopy("扫描摘要已收起，可从漏洞管理查看具体漏洞");
+  document.querySelector(".drawer-header h2").textContent = "扫描摘要";
   document.querySelector(".detail-drawer").classList.remove("drawer-closed");
+  paintProgress(displayedProgress);
   renderTargetInfo();
   updateProgress(currentProgress, currentScanTitle, currentScanSubtitle);
   renderModules();
@@ -1130,7 +1417,7 @@ function renderScanPage() {
   renderEvents();
   renderSummary();
   renderRows();
-  renderDetail();
+  renderScanSummaryDrawer();
   bindScanPageControls();
 }
 
@@ -1157,8 +1444,8 @@ function featureTable(headers, rows, rowOptions = {}) {
           <tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr>
         </thead>
         <tbody>
-          ${rows.map((row) => {
-            const rowId = rowOptions.getRowId?.(row) || "";
+          ${rows.map((row, index) => {
+            const rowId = rowOptions.getRowId?.(row, index) || "";
             const selectedClass = rowId && rowId === selectedVulnerabilityId ? " class=\"selected\"" : "";
             const rowAttr = rowId ? ` data-vuln-row-id="${escapeHtml(rowId)}"` : "";
             return `<tr${selectedClass}${rowAttr}>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
@@ -1170,22 +1457,23 @@ function featureTable(headers, rows, rowOptions = {}) {
 }
 
 function pageTemplate(page) {
-  const vulnerabilityRows = vulnerabilities.map((item) => [
-    escapeHtml(item.id),
-    `<button class="mini-text-button" data-view-fix-vuln-id="${escapeHtml(item.id)}">详情</button>`,
-    escapeHtml(item.type),
-    escapeHtml(item.remediationPriority || "P3"),
-    safeRiskBadge(item.risk),
-    escapeHtml(item.location),
-    `<span class="method">${escapeHtml(item.method)}</span>`,
-    `<span class="${statusClass(item.status)}">● ${item.status}</span>`,
+  const vulnerabilityGroups = groupedVulnerabilities();
+  const vulnerabilityRows = vulnerabilityGroups.map((group) => [
+    escapeHtml(group.type),
+    escapeHtml(group.component),
+    escapeHtml(group.count),
+    safeRiskBadge(group.highestRisk),
+    escapeHtml(group.p0p1),
+    escapeHtml(group.open),
+    escapeHtml([...group.methods].join(" / ")),
+    `<button class="mini-text-button" data-view-fix-vuln-id="${escapeHtml(group.firstId)}">查看代表漏洞</button>`,
   ]);
   const assetRows = assetRecords.map((item) => [
     escapeHtml(item.name),
     escapeHtml(item.address),
     escapeHtml(item.type),
     escapeHtml(item.task_id || "-"),
-    safeRiskBadge(item.risk),
+    item.type === "Codebase" ? "扫描配置" : safeRiskBadge(item.risk),
     `${escapeHtml(item.last_scan_at || "-")}<br><button class="mini-text-button" data-asset-scan="${escapeHtml(item.id)}">扫描</button><button class="mini-text-button" data-asset-delete="${escapeHtml(item.id)}">删除</button>`,
   ]);
   const reportRows = reportRecords.map((item) => [
@@ -1194,7 +1482,7 @@ function pageTemplate(page) {
     safeRiskBadge(item.risk?.overall_risk),
     "HTML / MD",
     escapeHtml(item.generated_at || "-"),
-    `<button class="mini-text-button" data-report-url="${escapeHtml(item.html_url)}">预览 HTML</button><button class="mini-text-button" data-report-url="${escapeHtml(item.markdown_url)}">打开 MD</button><button class="mini-text-button" data-report-rename="${escapeHtml(item.task_id)}">重命名</button><button class="mini-text-button" data-report-delete="${escapeHtml(item.task_id)}">删除</button>`,
+    `<button class="mini-text-button" data-report-url="${escapeHtml(item.html_url)}">查看报告</button><button class="mini-text-button" data-report-url="${escapeHtml(item.markdown_url)}">下载 MD</button><button class="mini-text-button" data-report-regenerate="${escapeHtml(item.task_id)}">重新生成</button><button class="mini-text-button" data-report-delete="${escapeHtml(item.task_id)}">删除</button>`,
   ]);
   const taskRows = taskRecords.map((item) => {
     const canCancel = item.status === "running" || item.status === "cancelling";
@@ -1213,48 +1501,50 @@ function pageTemplate(page) {
   const templates = {
     vulnerabilities: {
       title: "漏洞管理",
-      subtitle: "集中查看、筛选、分派和跟踪所有扫描发现的安全漏洞。",
+      subtitle: "按漏洞类型和组件聚合展示，减少重复证据噪音，优先处理高风险问题组。",
       metrics: [
         metricCard("总漏洞数", vulnerabilities.length),
+        metricCard("问题组", vulnerabilityGroups.length, "low"),
         metricCard("严重漏洞", vulnerabilities.filter((item) => item.risk === "Critical").length, "critical"),
-        metricCard("高危漏洞", vulnerabilities.filter((item) => item.risk === "High").length, "high"),
         metricCard("待修复", vulnerabilities.filter((item) => item.status === "未修复").length, "medium"),
       ].join(""),
-      body: featureTable(["编号", "操作", "漏洞类型", "优先级", "风险等级", "位置", "检测方式", "状态"], vulnerabilityRows, {
-        getRowId: (row) => row[0],
-      }),
+      body: featureTable(
+        ["漏洞类型", "组件", "证据数", "最高风险", "P0/P1", "未关闭", "检测方式", "操作"],
+        vulnerabilityRows,
+        { getRowId: (_row, index) => vulnerabilityGroups[index]?.firstId || "" },
+      ),
       drawer:
-        `当前共有 ${vulnerabilities.length} 个漏洞，未修复 ${vulnerabilities.filter((item) => item.status === "未修复").length} 个，修复中 ${vulnerabilities.filter((item) => item.status === "修复中").length} 个，已修复 ${vulnerabilities.filter((item) => item.status === "已修复").length} 个。`,
+        `当前共有 ${vulnerabilities.length} 条证据，聚合为 ${vulnerabilityGroups.length} 个问题组。未修复 ${vulnerabilities.filter((item) => item.status === "未修复").length} 个，修复中 ${vulnerabilities.filter((item) => item.status === "修复中").length} 个。`,
     },
     assets: {
-      title: "资产管理",
-      subtitle: "根据真实扫描任务自动汇总目标 URL 和源码目录。",
+      title: "目标配置",
+      subtitle: "管理扫描目标和源码路径。源码目录是扫描配置，不按业务资产风险展示。",
       metrics: [
-        metricCard("资产数", assetRecords.length),
-        metricCard("Web 应用", assetRecords.filter((item) => item.type === "Web 应用").length, "low"),
-        metricCard("高风险资产", assetRecords.filter((item) => ["High", "Critical"].includes(item.risk)).length, "critical"),
+        metricCard("配置数", assetRecords.length),
+        metricCard("Web 目标", assetRecords.filter((item) => item.type === "Web 应用").length, "low"),
+        metricCard("源码路径", assetRecords.filter((item) => item.type === "Codebase").length, "medium"),
         metricCard("最近扫描", assetRecords[0]?.last_scan_at?.split(" ").pop() || "-"),
       ].join(""),
-      body: featureTable(["资产名称", "地址", "类型", "来源任务", "风险", "最近扫描"], assetRows),
+      body: featureTable(["名称", "地址 / 路径", "类型", "来源任务", "风险说明", "最近扫描"], assetRows),
       drawer:
-        `当前资产库有 ${assetRecords.length} 条记录，可新增资产、删除资产，并从资产直接发起扫描。`,
+        `当前有 ${assetRecords.length} 条扫描配置。Web 目标用于 DAST，源码路径用于 SAST。`,
     },
     reports: {
       title: "报告中心",
-      subtitle: "统一管理后端扫描任务生成的 Markdown 和 HTML 报告。",
+      subtitle: "查看、下载或按当前报告模板重新生成扫描报告。",
       metrics: [
         metricCard("报告总数", reportRecords.length),
         metricCard("已完成任务", taskRecords.filter((item) => item.status === "completed").length, "low"),
         metricCard("Critical 报告", reportRecords.filter((item) => item.risk?.overall_risk === "Critical").length, "critical"),
-        metricCard("可导出格式", "2"),
+        metricCard("可下载格式", "2"),
       ].join(""),
       body: featureTable(["报告名称", "目标", "风险等级", "格式", "生成时间", "操作"], reportRows),
       drawer:
-        `当前报告中心有 ${reportRecords.length} 份报告。预览会打开 HTML 渲染报告，打开 MD 会显示 Markdown 原文。`,
+        `当前报告中心有 ${reportRecords.length} 份报告。旧报告可点击“重新生成”更新为当前模板。`,
     },
     "ai-fix": {
-      title: "AI 修复",
-      subtitle: "基于真实扫描漏洞展示中文解释、证据和修复建议。",
+      title: "AI 建议",
+      subtitle: "基于真实扫描漏洞展示中文解释、证据和修复建议；不直接修改业务代码。",
       metrics: [
         metricCard("漏洞数", vulnerabilities.length),
         metricCard("已有建议", vulnerabilities.filter((item) => item.advice).length, "low"),
@@ -1279,7 +1569,7 @@ function pageTemplate(page) {
           <section class="detail-card">
             <h4>${escapeHtml(currentFixItem?.id || "")} 修复建议</h4>
             <p class="detail-copy">建议来源：${escapeHtml(currentFixItem?.adviceSource || "unknown")}</p>
-            <p class="detail-copy">${escapeHtml(currentFixItem?.advice || "暂无建议，可点击下方按钮生成。")}</p>
+            <div class="markdown-body">${renderMarkdownLite(currentFixItem?.advice || "暂无建议，可点击下方按钮生成。")}</div>
             <div class="code-compare">
               <div>
                 <strong>检测证据</strong>
@@ -1290,8 +1580,8 @@ function pageTemplate(page) {
                 <code>${escapeHtml(currentFixItem?.scannerRule || "-")}</code>
               </div>
               <div>
-                <strong>测试输入</strong>
-                <code>${escapeHtml(currentFixItem?.payload || "-")}</code>
+                <strong>原始证据</strong>
+                <code>${currentFixItem?.payload ? "默认隐藏，可在漏洞详情中展开查看。" : "-"}</code>
               </div>
               <div>
                 <strong>影响位置</strong>
@@ -1304,11 +1594,11 @@ function pageTemplate(page) {
       `
         : `<div class="empty-state">暂无真实漏洞记录。请先在“扫描管理”启动一次扫描。</div>`,
       drawer:
-        `当前选中 ${currentFixItem?.id || "无"}。建议来源会显示为模型 provider 或 local-template，生成后的建议会保存到后端。`,
+        `当前选中 ${currentFixItem?.id || "无"}。这里仅生成修复建议，不直接修改业务代码。建议来源会显示为模型 provider 或 local-template。`,
     },
     schedule: {
-      title: "任务调度",
-      subtitle: "查看后端扫描任务队列和执行历史。",
+      title: "任务历史",
+      subtitle: "查看扫描任务执行历史、重跑任务和清理记录。",
       metrics: [
         metricCard("任务总数", taskRecords.length),
         metricCard("运行中", taskRecords.filter((item) => item.status === "running").length, "low"),
@@ -1321,7 +1611,7 @@ function pageTemplate(page) {
     },
     settings: {
       title: "系统设置",
-      subtitle: "配置扫描目标、源码路径和 AI 修复建议接口。",
+      subtitle: "配置扫描目标、源码路径和 AI 建议接口。",
       metrics: [
         metricCard("API 地址", backendConnected ? "已连接" : "未连接"),
         metricCard("任务数", taskRecords.length, "low"),
@@ -1373,7 +1663,7 @@ function featureStatusCopy(page) {
   const latest = latestTask();
   const copies = {
     vulnerabilities: `数据来自最近扫描任务 ${activeTaskId || latest?.task_id || "-"}，当前筛选条件下显示 ${filteredVulnerabilities().length} 条漏洞。`,
-    assets: `资产数据已持久化到 SQLite，刷新页面或重启服务后不会丢失。`,
+    assets: `扫描目标配置已持久化到 SQLite，刷新页面或重启服务后不会丢失。`,
     reports: `报告内容来自后端生成的 HTML/Markdown，已持久化到 SQLite。`,
     "ai-fix": aiSettings.key_configured
       ? `AI 接口已配置：${aiSettings.provider || aiSettings.runtime_provider || "unknown"} / ${aiSettings.model || "默认模型"}。`
@@ -1400,7 +1690,7 @@ async function renderFeaturePage(page) {
           <p>${template.subtitle}</p>
         </div>
         <div class="feature-actions">
-          ${page === "assets" ? `<button class="ghost-button" data-feature-action="add-asset">新增资产</button>` : ""}
+          ${page === "assets" ? `<button class="ghost-button" data-feature-action="add-asset">新增目标</button>` : ""}
           ${page === "schedule" ? `<button class="ghost-button" data-feature-action="clear-tasks">清空任务</button>` : ""}
           <button class="ghost-button" data-feature-action="refresh">刷新</button>
         </div>
@@ -1411,6 +1701,7 @@ async function renderFeaturePage(page) {
   `;
 
   document.querySelector(".drawer-header h2").textContent = template.title;
+  setDrawerClosedCopy(page === "vulnerabilities" ? "点击漏洞行查看详情" : "详情面板已收起");
   document.querySelector(".detail-drawer").classList.remove("drawer-closed");
   document.querySelector("#detailContent").innerHTML = `
     <section class="detail-card">
@@ -1496,15 +1787,15 @@ async function renderFeaturePage(page) {
     button.addEventListener("click", async () => {
       if (button.dataset.featureAction === "add-asset") {
         showModal(
-          "新增资产",
+          "新增扫描目标",
           `<form class="mock-form">
-            <label>资产名称<input id="assetNameInput" value="本地靶场" /></label>
-            <label>资产地址<input id="assetAddressInput" value="${escapeHtml(scanTarget.base_url)}" /></label>
+            <label>名称<input id="assetNameInput" value="本地靶场" /></label>
+            <label>目标地址<input id="assetAddressInput" value="${escapeHtml(scanTarget.base_url)}" /></label>
             <label>源码路径<input id="assetProjectPathInput" value="${escapeHtml(scanTarget.project_path)}" /></label>
-            <label>资产类型<select id="assetTypeInput"><option>Web 应用</option><option>Codebase</option></select></label>
+            <label>类型<select id="assetTypeInput"><option>Web 应用</option><option>Codebase</option></select></label>
             <label>负责人<input id="assetOwnerInput" placeholder="owner" /></label>
             <label>标签<input id="assetTagsInput" placeholder="local, lab" /></label>
-            <button type="button" id="saveAssetButton">保存资产</button>
+            <button type="button" id="saveAssetButton">保存目标</button>
           </form>`,
         );
         document.querySelector("#saveAssetButton")?.addEventListener("click", async () => {
@@ -1527,7 +1818,7 @@ async function renderFeaturePage(page) {
           closeModal();
           await loadPlatformData();
           renderFeaturePage("assets");
-          showToast("资产已保存");
+          showToast("扫描目标已保存");
         });
         return;
       }
@@ -1545,6 +1836,12 @@ async function renderFeaturePage(page) {
       renderFeaturePage(page);
       showToast(`${template.title}已刷新`);
     });
+  });
+
+  document.querySelector("#openVulnerabilityManagementButton")?.addEventListener("click", () => {
+    setActiveNavigation("vulnerabilities");
+    history.replaceState(null, "", "#vulnerabilities");
+    renderFeaturePage("vulnerabilities");
   });
 
   document.querySelectorAll("[data-fix-vuln-id]").forEach((button) => {
@@ -1566,8 +1863,22 @@ async function renderFeaturePage(page) {
       }
       const reportUrl = button.dataset.reportUrl;
       if (reportUrl) {
+        if (reportUrl.endsWith("/markdown")) {
+          const response = await fetch(apiUrl(reportUrl));
+          if (!response.ok) {
+            throw new Error(`报告下载失败：HTTP ${response.status}`);
+          }
+          const blob = await response.blob();
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = `${reportUrl.split("/").slice(-2, -1)[0] || "security-report"}.md`;
+          link.click();
+          URL.revokeObjectURL(link.href);
+          showToast("Markdown 报告已下载");
+          return;
+        }
         window.open(apiUrl(reportUrl), "_blank", "noopener");
-        showToast("已打开后端报告");
+        showToast("已打开报告预览");
         return;
       }
       if (button.dataset.assetScan) {
@@ -1620,6 +1931,16 @@ async function renderFeaturePage(page) {
         await loadPlatformData();
         renderFeaturePage(page);
         showToast("报告已删除");
+        return;
+      }
+      if (button.dataset.reportRegenerate) {
+        const data = await apiRequest(`/report/${button.dataset.reportRegenerate}/regenerate`, { method: "POST" });
+        await loadPlatformData();
+        renderFeaturePage(page);
+        if (data.html_url) {
+          window.open(apiUrl(data.html_url), "_blank", "noopener");
+        }
+        showToast("报告已按当前模板重新生成");
         return;
       }
       if (button.dataset.reportRename) {
@@ -1700,9 +2021,10 @@ function bindChromeInteractions() {
   const navPageMap = {
     扫描管理: "scan",
     漏洞管理: "vulnerabilities",
-    资产管理: "assets",
+    目标配置: "assets",
     报告中心: "reports",
-    "AI 修复": "ai-fix",
+    "AI 建议": "ai-fix",
+    任务历史: "schedule",
     系统设置: "settings",
   };
 
@@ -1710,15 +2032,13 @@ function bindChromeInteractions() {
     const detailButton = event.target.closest("[data-view-fix-vuln-id]");
     if (detailButton) {
       event.stopPropagation();
-      openAiFixForVulnerability(detailButton.dataset.viewFixVulnId);
+      openVulnerabilityDetail(detailButton.dataset.viewFixVulnId);
       return;
     }
 
     const vulnRow = event.target.closest("[data-vuln-row-id]");
     if (vulnRow && !event.target.closest("button")) {
-      selectedVulnerabilityId = vulnRow.dataset.vulnRowId;
-      renderFeaturePage(location.hash.replace("#", "") || "vulnerabilities");
-      showToast(`已选中 ${selectedVulnerabilityId}`);
+      openVulnerabilityDetail(vulnRow.dataset.vulnRowId);
     }
   });
 
@@ -1758,14 +2078,15 @@ function bindChromeInteractions() {
   document.querySelector("[data-action='help']").addEventListener("click", () => {
     showModal(
       "帮助",
-      `<p class="modal-copy">扫描管理、漏洞管理、资产管理、报告中心和任务调度已经接入本地后端 API。系统状态展示后端任务、报告和资产统计。</p>`,
+      `<p class="modal-copy">扫描管理、漏洞管理、目标配置、报告中心和任务历史已经接入本地后端 API。系统状态展示后端任务、报告和扫描目标统计。</p>`,
     );
   });
 
   document.querySelector("#closeDrawerButton").addEventListener("click", () => {
     drawerOpen = false;
-    document.querySelector(".detail-drawer").classList.add("drawer-closed");
-    showToast("漏洞详情已收起，点击表格行可重新打开");
+    const drawer = document.querySelector(".detail-drawer");
+    drawer.classList.add("drawer-closed");
+    showToast(drawer.dataset.emptyCopy || "详情面板已收起");
   });
 
   document.querySelector("#modalCloseButton").addEventListener("click", closeModal);
