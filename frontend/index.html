@@ -15,7 +15,7 @@
         </div>
         <div class="top-actions">
           <button class="icon-button" data-action="notifications" aria-label="通知">
-            <span class="notification-dot">12</span>
+            <span class="notification-dot" id="notificationDot" hidden>0</span>
             <span>!</span>
           </button>
           <button class="icon-button" data-action="help" aria-label="帮助">?</button>
@@ -105,6 +105,16 @@
               </div>
             </div>
           </div>
+          <div class="ai-progress-card" id="aiProgressCard" hidden>
+            <div class="ai-progress-header">
+              <span>正在生成 AI 建议</span>
+              <strong id="aiProgressCount">0 / 0</strong>
+            </div>
+            <div class="ai-progress-track" aria-label="AI 建议生成进度">
+              <span id="aiProgressBar"></span>
+            </div>
+            <p id="aiProgressText">等待 AI 建议任务开始。</p>
+          </div>
           <ol class="scan-steps" id="scanSteps"></ol>
         </section>
 
@@ -151,6 +161,6 @@
       </section>
     </div>
 
-    <script src="./app.js?v=20260616-event-dedupe"></script>
+    <script src="./app.js?v=20260616-ai-progress-copy"></script>
   </body>
 </html>

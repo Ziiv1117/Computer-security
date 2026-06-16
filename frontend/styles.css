@@ -166,6 +166,17 @@ button:disabled {
   line-height: 19px;
 }
 
+.notification-dot[hidden] {
+  display: none;
+}
+
+.icon-button.has-unread {
+  color: #fff;
+  border-color: rgba(255, 75, 85, 0.42);
+  background: rgba(255, 75, 85, 0.08);
+  box-shadow: 0 0 18px rgba(255, 75, 85, 0.16);
+}
+
 .user-pill {
   display: flex;
   align-items: center;
@@ -531,6 +542,62 @@ dd {
   place-items: center;
 }
 
+.ai-progress-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  width: min(460px, 100%);
+  margin: -2px auto 20px;
+  padding: 12px 14px;
+  border: 1px solid rgba(87, 173, 255, 0.32);
+  border-radius: 8px;
+  background: rgba(10, 21, 35, 0.72);
+  box-shadow: inset 0 0 22px rgba(47, 140, 255, 0.08);
+}
+
+.ai-progress-card[hidden] {
+  display: none;
+}
+
+.ai-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #dff3ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ai-progress-header strong {
+  color: var(--primary-2);
+  font-size: 13px;
+}
+
+.ai-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(112, 188, 255, 0.12);
+}
+
+.ai-progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--success));
+  box-shadow: 0 0 14px rgba(24, 199, 255, 0.38);
+  transition: width 260ms ease;
+}
+
+.ai-progress-card p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
 .radar {
   position: relative;
   --progress: 0%;
@@ -781,6 +848,9 @@ dd {
   color: var(--text-soft);
   font-size: 13px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.event-item.is-new {
   animation: eventIn 220ms ease both;
 }
 
@@ -1308,6 +1378,17 @@ input[type="checkbox"] {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.notification-item.risk,
+.notification-item.error {
+  border-color: rgba(255, 75, 85, 0.28);
+  background: rgba(255, 75, 85, 0.07);
+}
+
+.notification-item.warn {
+  border-color: rgba(255, 159, 28, 0.28);
+  background: rgba(255, 159, 28, 0.07);
+}
+
 .notification-item div {
   display: flex;
   justify-content: space-between;
@@ -1504,11 +1585,34 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: 0.9fr 1.1fr;
   gap: 16px;
+  align-items: start;
+}
+
+.ai-selector-card,
+.ai-advice-card {
+  margin-top: 0;
+}
+
+.ai-selector-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: min(640px, calc(100vh - 310px));
+  min-height: 360px;
+}
+
+.ai-advice-card {
+  position: sticky;
+  top: 18px;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
 }
 
 .fix-list {
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .fix-list button {
@@ -1562,7 +1666,34 @@ input[type="checkbox"] {
 
 .ai-generate-button {
   width: 100%;
-  margin-top: 16px;
+  margin-top: 10px;
+}
+
+.ai-source-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  margin-left: 8px;
+  padding: 0 8px;
+  color: #9ff3d0;
+  border: 1px solid rgba(34, 209, 138, 0.28);
+  border-radius: 999px;
+  background: rgba(34, 209, 138, 0.1);
+  font-size: 12px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.ai-source-badge.fallback {
+  color: #ffd18a;
+  border-color: rgba(255, 184, 77, 0.28);
+  background: rgba(255, 184, 77, 0.1);
+}
+
+.ai-action-hint {
+  margin: 14px 0 0;
+  color: var(--text-soft);
+  font-size: 13px;
 }
 
 .settings-grid {
@@ -1654,5 +1785,20 @@ input[type="checkbox"] {
 
   .workspace {
     grid-template-columns: 260px minmax(320px, 1fr) 292px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ai-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-selector-card {
+    max-height: 420px;
+  }
+
+  .ai-advice-card {
+    position: static;
+    max-height: none;
   }
 }

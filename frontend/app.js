@@ -12,6 +12,12 @@ let latestReports = {};
 let latestRisk = null;
 let backendConnected = false;
 let currentProgress = 0;
+let aiProgress = {
+  total: 0,
+  completed: 0,
+  current: "",
+  active: false,
+};
 let displayedProgress = 0;
 let progressTarget = 0;
 let progressAnimationFrame = 0;
@@ -55,8 +61,11 @@ let scanSteps = [
 const initialEvents = [];
 
 let events = [];
+let lastRenderedEventKeys = new Set();
 
 let vulnerabilities = [];
+const notificationReadStorageKey = "aiScanner.readNotifications.v1";
+let readNotificationKeys = new Set(JSON.parse(localStorage.getItem(notificationReadStorageKey) || "[]"));
 
 let selectedVulnerabilityId = vulnerabilities[0]?.id ?? "";
 let currentFilter = "全部";
@@ -245,6 +254,26 @@ function safeRiskBadge(risk) {
   return `<span class="badge ${riskClass(risk)}">${escapeHtml(risk || "Low")}</span>`;
 }
 
+function hasModelAdvice(item) {
+  const source = String(item?.adviceSource || "").toLowerCase();
+  return Boolean(item?.advice?.trim()) && !["", "unknown", "local-template", "fallback-error"].includes(source);
+}
+
+function aiAdviceAction(item) {
+  if (hasModelAdvice(item)) {
+    return {
+      label: "重新生成 AI 建议",
+      tone: "muted",
+      hint: "当前建议已由 AI 生成；仅在需要换一版表述时重新生成。",
+    };
+  }
+  return {
+    label: "调用 AI 生成建议",
+    tone: "warning",
+    hint: "当前展示的是本地模板或暂无建议，可调用已配置的 AI 服务补生成。",
+  };
+}
+
 function latestTask() {
   return taskRecords[0] || null;
 }
@@ -333,9 +362,11 @@ async function loadPlatformData() {
     reportRecords = reportsData.reports || [];
     assetRecords = assetsData.assets || [];
     updateBackendStatusPanel();
+    updateNotificationBadge();
   } catch (error) {
     addEvent("WARN", `平台数据同步失败：${error.message}`);
     updateBackendStatusPanel();
+    updateNotificationBadge();
   }
 }
 
@@ -403,10 +434,50 @@ function updateProgress(progress = 0, title = "等待扫描", subtitle = "启动
   }
 }
 
+function syncAiProgress(nextProgress = {}) {
+  const total = Math.max(0, Number(nextProgress.total) || 0);
+  const completed = Math.min(total, Math.max(0, Number(nextProgress.completed) || 0));
+  aiProgress = {
+    total,
+    completed,
+    current: nextProgress.current || "",
+    active: Boolean(nextProgress.active) && completed < total,
+  };
+}
+
+function renderAiProgress() {
+  const card = document.querySelector("#aiProgressCard");
+  if (!card) {
+    return;
+  }
+  const shouldShow = aiProgress.total > 0 && (aiProgress.active || aiProgress.completed > 0);
+  card.hidden = !shouldShow;
+  if (!shouldShow) {
+    return;
+  }
+
+  const percent = aiProgress.total ? Math.round((aiProgress.completed / aiProgress.total) * 100) : 0;
+  const count = document.querySelector("#aiProgressCount");
+  const bar = document.querySelector("#aiProgressBar");
+  const text = document.querySelector("#aiProgressText");
+  if (count) {
+    count.textContent = `${aiProgress.completed} / ${aiProgress.total}`;
+  }
+  if (bar) {
+    bar.style.width = `${percent}%`;
+  }
+  if (text) {
+    text.textContent = aiProgress.active
+      ? `AI 建议正在逐条生成，当前 ${aiProgress.current || "等待接口响应"}。`
+      : "AI 建议已全部生成";
+  }
+}
+
 function renderAllScanData() {
   renderTargetInfo();
   renderModules();
   renderSteps();
+  renderAiProgress();
   renderEvents();
   renderSummary();
   renderRows();
@@ -425,10 +496,12 @@ function resetScanWorkspace() {
   activeTaskId = "";
   latestReports = {};
   latestRisk = null;
+  syncAiProgress();
   vulnerabilities = [];
   selectedVulnerabilityIds.clear();
   selectedVulnerabilityId = "";
   events = [];
+  lastRenderedEventKeys = new Set();
   modules = modules.map((module) => ({ name: module.name }));
   scanSteps = scanSteps.map((step) => ({ name: step.name, time: "等待中", status: "pending" }));
   updateProgress(0, "等待扫描", "点击开始扫描后，会从后端同步真实扫描进度。");
@@ -447,16 +520,23 @@ function syncStatus(status) {
     level: event.level || "INFO",
     text: event.message || event.text || "",
   })));
+  syncAiProgress(status.ai_progress);
   const runningModule = displayStepName(status.current_step || "扫描任务");
   modules = modules.map((module) => ({
     ...module,
     state: module.name.includes(runningModule) || runningModule.includes(module.name) ? "进行中" : undefined,
   }));
-  updateProgress(
-    status.progress,
-    status.status === "completed" ? "扫描完成" : "扫描进行中",
-    status.current_step ? `当前阶段：${displayStepName(status.current_step)}` : "后端扫描任务正在运行。",
-  );
+  const currentStep = displayStepName(status.current_step || "");
+  const scanTitle = status.status === "completed" || status.progress >= 100 ? "扫描已完成" : "扫描进行中";
+  let scanSubtitle = status.current_step ? `当前阶段：${currentStep}` : "后端扫描任务正在运行。";
+  if (aiProgress.active) {
+    scanSubtitle = `正在生成 AI 建议：${aiProgress.completed} / ${aiProgress.total}`;
+  } else if (currentStep === "生成报告") {
+    scanSubtitle = "漏洞检测和 AI 建议已完成，正在生成报告。";
+  } else if (status.status === "completed") {
+    scanSubtitle = "漏洞检测、AI 建议和报告生成已完成。";
+  }
+  updateProgress(status.progress, scanTitle, scanSubtitle);
   renderAllScanData();
 }
 
@@ -505,6 +585,22 @@ async function pollScanStatus() {
     statusPollTimer = null;
     addEvent("ERROR", `扫描状态同步失败：${error.message}`);
     showToast("扫描状态同步失败");
+  }
+}
+
+async function refreshActiveScanStatus() {
+  if (!activeTaskId) {
+    await loadPlatformData();
+    const latestRunningTask = taskRecords.find((task) => task.status === "running" || task.status === "cancelling");
+    activeTaskId = latestRunningTask?.task_id || latestTask()?.task_id || "";
+  }
+  if (!activeTaskId) {
+    return;
+  }
+  const status = await apiRequest(`/scan/status/${activeTaskId}`);
+  syncStatus(status);
+  if (status.status === "completed") {
+    await fetchScanResult();
   }
 }
 
@@ -625,6 +721,51 @@ function eventSignature(event) {
   return `${event.level}|${String(event.text || "").replace(/\bVULN-\d+\b/g, "VULN-*")}`;
 }
 
+function eventKey(event) {
+  return `${event.time}|${event.level}|${event.text}|${event.count || 1}`;
+}
+
+function notificationKey(event) {
+  return `${event.taskId}|${event.time}|${event.level}|${event.text}`;
+}
+
+function notificationItems() {
+  const taskEvents = taskRecords.flatMap((task) =>
+    (task.events || []).map((event) => ({
+      taskId: task.task_id,
+      time: event.time || task.created_at || "-",
+      level: event.level || "INFO",
+      text: event.message || event.text || "",
+    })),
+  );
+  const localEvents = events.map((event) => ({
+    taskId: activeTaskId || "当前页面",
+    time: event.time || "-",
+    level: event.level || "INFO",
+    text: event.text || "",
+  }));
+  return [...taskEvents, ...localEvents].filter((event) => ["RISK", "WARN", "ERROR"].includes(event.level));
+}
+
+function persistReadNotificationKeys() {
+  const keys = [...readNotificationKeys].slice(-300);
+  readNotificationKeys = new Set(keys);
+  localStorage.setItem(notificationReadStorageKey, JSON.stringify(keys));
+}
+
+function updateNotificationBadge() {
+  const dot = document.querySelector("#notificationDot");
+  const button = document.querySelector("[data-action='notifications']");
+  if (!dot || !button) {
+    return;
+  }
+  const unreadCount = notificationItems().filter((event) => !readNotificationKeys.has(notificationKey(event))).length;
+  dot.hidden = unreadCount === 0;
+  dot.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
+  button.classList.toggle("has-unread", unreadCount > 0);
+  button.setAttribute("aria-label", unreadCount > 0 ? `通知，${unreadCount} 条未读` : "通知，无未读");
+}
+
 function normalizeEventList(rawEvents, limit = 50) {
   const normalized = [];
   rawEvents.forEach((event) => {
@@ -660,6 +801,7 @@ function appendResultErrors(errors) {
 function addEvent(level, text) {
   events = normalizeEventList([...events, { time: currentTime(), level, text }]);
   renderEvents();
+  updateNotificationBadge();
 }
 
 function showToast(message) {
@@ -738,6 +880,8 @@ function renderEvents() {
   }
 
   const visibleEvents = eventStreamExpanded ? events : events.slice(-collapsedEventLimit);
+  const previousKeys = lastRenderedEventKeys;
+  const currentKeys = new Set(events.map(eventKey));
   list.classList.toggle("collapsed", !eventStreamExpanded);
   if (toggleButton) {
     toggleButton.disabled = events.length <= collapsedEventLimit;
@@ -745,16 +889,19 @@ function renderEvents() {
   }
 
   list.innerHTML = visibleEvents
-    .map(
-      (event) => `
-        <div class="event-item">
+    .map((event) => {
+      const key = eventKey(event);
+      const isNew = !previousKeys.has(key);
+      return `
+        <div class="event-item${isNew ? " is-new" : ""}">
           <time>${event.time}</time>
           <span class="event-level ${event.level.toLowerCase()}">${event.level}</span>
           <span>${event.text}${event.count > 1 ? ` ×${event.count}` : ""}</span>
         </div>
-      `,
-    )
+      `;
+    })
     .join("");
+  lastRenderedEventKeys = currentKeys;
 }
 
 function renderSummary() {
@@ -1274,6 +1421,9 @@ function renderScanSummaryDrawer() {
   );
   const progress = Number.isFinite(Number(latest?.progress)) ? Number(latest.progress) : currentProgress;
   const taskId = activeTaskId || latest?.task_id || "-";
+  const aiStatus = aiProgress.total
+    ? `${aiProgress.completed} / ${aiProgress.total}${aiProgress.active ? " 生成中" : " 已完成"}`
+    : "等待中";
 
   detail.innerHTML = `
     <section class="detail-card">
@@ -1282,6 +1432,7 @@ function renderScanSummaryDrawer() {
         <div><dt>任务</dt><dd>${escapeHtml(taskId)}</dd></div>
         <div><dt>状态</dt><dd>${latest ? statusLabel(latest.status) : currentScanTitle}</dd></div>
         <div><dt>进度</dt><dd>${escapeHtml(Math.round(progress))}%</dd></div>
+        <div><dt>AI 建议</dt><dd>${escapeHtml(aiStatus)}</dd></div>
         <div><dt>目标</dt><dd>${escapeHtml(scanTarget.base_url)}</dd></div>
         <div><dt>源码</dt><dd>${escapeHtml(scanTarget.project_path)}</dd></div>
       </dl>
@@ -1352,6 +1503,7 @@ function bindScanPageControls() {
 
   document.querySelector("#clearEventsButton")?.addEventListener("click", () => {
     events = [];
+    lastRenderedEventKeys = new Set();
     eventStreamExpanded = false;
     renderEvents();
     showToast("实时事件流已清空");
@@ -1404,7 +1556,7 @@ function bindScanPageControls() {
 
 }
 
-function renderScanPage() {
+async function renderScanPage() {
   document.querySelector(".workspace").innerHTML = initialWorkspaceTemplate;
   setDrawerClosedCopy("扫描摘要已收起，可从漏洞管理查看具体漏洞");
   document.querySelector(".drawer-header h2").textContent = "扫描摘要";
@@ -1419,6 +1571,11 @@ function renderScanPage() {
   renderRows();
   renderScanSummaryDrawer();
   bindScanPageControls();
+  try {
+    await refreshActiveScanStatus();
+  } catch (error) {
+    addEvent("WARN", `扫描状态恢复失败：${error.message}`);
+  }
 }
 
 function metricCard(label, value, tone = "total") {
@@ -1497,6 +1654,7 @@ function pageTemplate(page) {
   });
   const currentTask = latestTask();
   const currentFixItem = selectedItem() || vulnerabilities[0] || null;
+  const currentAdviceAction = aiAdviceAction(currentFixItem);
 
   const templates = {
     vulnerabilities: {
@@ -1554,7 +1712,7 @@ function pageTemplate(page) {
       body: vulnerabilities.length
         ? `
         <div class="ai-layout">
-          <section class="detail-card">
+          <section class="detail-card ai-selector-card">
             <h4>选择漏洞</h4>
             <div class="fix-list">
               ${vulnerabilities.map((item) => `
@@ -1566,9 +1724,12 @@ function pageTemplate(page) {
               `).join("")}
             </div>
           </section>
-          <section class="detail-card">
+          <section class="detail-card ai-advice-card">
             <h4>${escapeHtml(currentFixItem?.id || "")} 修复建议</h4>
-            <p class="detail-copy">建议来源：${escapeHtml(currentFixItem?.adviceSource || "unknown")}</p>
+            <p class="detail-copy">
+              建议来源：${escapeHtml(currentFixItem?.adviceSource || "unknown")}
+              ${hasModelAdvice(currentFixItem) ? `<span class="ai-source-badge">已由 AI 生成</span>` : `<span class="ai-source-badge fallback">本地模板</span>`}
+            </p>
             <div class="markdown-body">${renderMarkdownLite(currentFixItem?.advice || "暂无建议，可点击下方按钮生成。")}</div>
             <div class="code-compare">
               <div>
@@ -1588,7 +1749,8 @@ function pageTemplate(page) {
                 <code>${escapeHtml(currentFixItem?.location || "-")}</code>
               </div>
             </div>
-            <button class="drawer-action warning ai-generate-button" data-ai-action="generate">调用后端 AI 接口生成建议</button>
+            <p class="ai-action-hint">${escapeHtml(currentAdviceAction.hint)}</p>
+            <button class="drawer-action ${currentAdviceAction.tone} ai-generate-button" data-ai-action="generate">${escapeHtml(currentAdviceAction.label)}</button>
           </section>
         </div>
       `
@@ -1676,7 +1838,7 @@ function featureStatusCopy(page) {
 
 async function renderFeaturePage(page) {
   if (page === "scan") {
-    renderScanPage();
+    await renderScanPage();
     return;
   }
 
@@ -1982,28 +2144,18 @@ async function showRecentScanEvents() {
   if (backendConnected) {
     await loadPlatformData();
   }
-  const taskEvents = taskRecords.flatMap((task) =>
-    (task.events || []).map((event) => ({
-      taskId: task.task_id,
-      time: event.time || task.created_at || "-",
-      level: event.level || "INFO",
-      text: event.message || event.text || "",
-    })),
-  );
-  const localEvents = events.map((event) => ({
-    taskId: activeTaskId || "当前页面",
-    time: event.time || "-",
-    level: event.level || "INFO",
-    text: event.text || "",
-  }));
-  const recentEvents = [...taskEvents, ...localEvents].slice(-12).reverse();
+  const allNotifications = notificationItems();
+  const recentEvents = allNotifications.slice(-12).reverse();
+  allNotifications.forEach((event) => readNotificationKeys.add(notificationKey(event)));
+  persistReadNotificationKeys();
+  updateNotificationBadge();
 
   showModal(
     "最近扫描事件",
     recentEvents.length
       ? `<div class="notification-list">
           ${recentEvents.map((event) => `
-            <div class="notification-item">
+            <div class="notification-item ${event.level.toLowerCase()}">
               <div>
                 <strong>${escapeHtml(event.level)}</strong>
                 <span>${escapeHtml(event.taskId)}</span>
@@ -2123,6 +2275,7 @@ async function boot() {
   renderSummary();
   renderRows();
   renderDetail();
+  updateNotificationBadge();
   bindScanPageControls();
   bindChromeInteractions();
   await loadBackendSettings();
@@ -2130,7 +2283,7 @@ async function boot() {
   const initialPage = location.hash.replace("#", "");
   if (initialPage && document.querySelector(`.side-item[data-page="${initialPage}"]`)) {
     setActiveNavigation(initialPage);
-    renderFeaturePage(initialPage);
+    await renderFeaturePage(initialPage);
   }
 }
 

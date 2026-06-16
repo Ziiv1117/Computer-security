@@ -615,6 +615,7 @@ def _load_tasks() -> None:
             "completed_at": completed_at,
             "result": _json_load(row["result_json"], None),
             "errors": errors,
+            "ai_progress": {"total": 0, "completed": 0, "current": "", "active": False},
             "vulnerability_status": {},
             "cancel_requested": bool(row["cancel_requested"]),
         }
@@ -638,6 +639,7 @@ def _set_task_state(
     status: str | None = None,
     progress: int | None = None,
     current_step: str | None = None,
+    ai_progress: dict[str, Any] | None = None,
     events: list[dict[str, str]] | None = None,
     step_index: int | None = None,
 ) -> None:
@@ -649,6 +651,13 @@ def _set_task_state(
             task["progress"] = progress
         if current_step is not None:
             task["current_step"] = current_step
+        if ai_progress is not None:
+            task["ai_progress"] = {
+                "total": max(0, int(ai_progress.get("total") or 0)),
+                "completed": max(0, int(ai_progress.get("completed") or 0)),
+                "current": str(ai_progress.get("current") or ""),
+                "active": bool(ai_progress.get("active")),
+            }
         if events:
             task["events"].extend(events)
             task["events"] = task["events"][-50:]
@@ -684,6 +693,7 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "current_step": task["current_step"],
         "steps": task["steps"],
         "events": task["events"],
+        "ai_progress": task.get("ai_progress", {"total": 0, "completed": 0, "current": "", "active": False}),
         "target": task["target"],
         "created_at": task["created_at"],
         "completed_at": task.get("completed_at"),
@@ -862,34 +872,58 @@ def _run_task(task_id: str) -> None:
         )
         progress_cursor = {"value": 12}
 
-        def progress_event(level: str, message: str) -> None:
-            if "静态" in message:
+        def progress_event(level: str, message: str, meta: dict[str, Any] | None = None) -> None:
+            meta = meta or {}
+            ai_state = None
+            if meta.get("phase") == "ai_advice":
+                step_index = 5
+                current_step = "生成 AI 建议"
+                progress = 100
+                ai_state = {
+                    "total": int(meta.get("ai_total") or 0),
+                    "completed": int(meta.get("ai_completed") or 0),
+                    "current": str(meta.get("ai_current") or ""),
+                    "active": int(meta.get("ai_completed") or 0) < int(meta.get("ai_total") or 0),
+                }
+            elif "静态" in message:
                 step_index = 4
                 current_step = "静态源码扫描"
+                progress_cursor["value"] = min(92, progress_cursor["value"] + 4)
+                progress = progress_cursor["value"]
             elif "修复建议" in message:
                 step_index = 5
                 current_step = "生成 AI 建议"
+                progress = 100
             elif "报告" in message:
                 step_index = 6
                 current_step = "生成报告"
+                progress = 100
             elif "sql_injection" in message:
                 step_index = 1
                 current_step = "SQL 注入测试"
+                progress_cursor["value"] = min(92, progress_cursor["value"] + 4)
+                progress = progress_cursor["value"]
             elif "xss" in message:
                 step_index = 2
                 current_step = "XSS 测试"
+                progress_cursor["value"] = min(92, progress_cursor["value"] + 4)
+                progress = progress_cursor["value"]
             elif "broken_access_control" in message or "access_control" in message:
                 step_index = 3
                 current_step = "越权访问测试"
+                progress_cursor["value"] = min(92, progress_cursor["value"] + 4)
+                progress = progress_cursor["value"]
             else:
                 step_index = 1
                 current_step = "动态漏洞扫描"
+                progress_cursor["value"] = min(92, progress_cursor["value"] + 4)
+                progress = progress_cursor["value"]
 
-            progress_cursor["value"] = min(95, progress_cursor["value"] + 3)
             _set_task_state(
                 task_id,
-                progress=progress_cursor["value"],
+                progress=progress,
                 current_step=current_step,
+                ai_progress=ai_state,
                 step_index=step_index,
                 events=[_event(level, message)],
             )
@@ -907,6 +941,7 @@ def _run_task(task_id: str) -> None:
                 task["status"] = "cancelled"
                 task["progress"] = 100
                 task["current_step"] = "任务已取消"
+                task["ai_progress"] = {**task.get("ai_progress", {}), "active": False}
                 task["completed_at"] = _timestamp()
                 task.setdefault("events", []).append(_event("WARN", "任务已取消，扫描结果未写入报告中心"))
                 _save_task_locked(task)
@@ -925,6 +960,7 @@ def _run_task(task_id: str) -> None:
             status="completed",
             progress=100,
             current_step="扫描完成",
+            ai_progress={**task.get("ai_progress", {}), "active": False},
             events=[
                 _event(level, f"扫描完成，发现 {total} 个漏洞"),
                 _event("INFO", "Markdown / HTML 报告已生成"),
@@ -936,6 +972,7 @@ def _run_task(task_id: str) -> None:
             status="failed",
             progress=100,
             current_step="扫描失败",
+            ai_progress={"total": 0, "completed": 0, "current": "", "active": False},
             events=[_event("ERROR", f"扫描失败：{exc}")],
         )
         with TASK_LOCK:
@@ -973,6 +1010,7 @@ def start_scan(payload: dict[str, Any]) -> dict[str, Any]:
         "completed_at": None,
         "result": None,
         "errors": [],
+        "ai_progress": {"total": 0, "completed": 0, "current": "", "active": False},
         "vulnerability_status": {},
         "cancel_requested": False,
     }
@@ -1137,7 +1175,11 @@ class ScannerApiHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/tasks":
             with TASK_LOCK:
-                tasks = [_public_task(task) for task in TASKS.values()]
+                tasks = sorted(
+                    (_public_task(task) for task in TASKS.values()),
+                    key=lambda item: item.get("created_at") or "",
+                    reverse=True,
+                )
             self._send_json({"tasks": tasks})
             return
         if path == "/api/reports":
