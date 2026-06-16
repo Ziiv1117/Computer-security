@@ -37,6 +37,7 @@ let aiSettings = {
   runtime_provider: "",
   model: "qwen3.6-flash",
 };
+let vulnerabilityMetricFilter = "all";
 
 let modules = [
   { name: "连接目标" },
@@ -278,10 +279,29 @@ function latestTask() {
   return taskRecords[0] || null;
 }
 
-function groupedVulnerabilities() {
+function metricFilteredVulnerabilities() {
+  if (vulnerabilityMetricFilter === "severe") {
+    return vulnerabilities.filter((item) => ["Critical", "High"].includes(item.risk));
+  }
+  if (vulnerabilityMetricFilter === "unfixed") {
+    return vulnerabilities.filter((item) => item.status === "未修复");
+  }
+  return vulnerabilities;
+}
+
+function metricFilterLabel() {
+  const labels = {
+    all: "全部漏洞",
+    severe: "严重漏洞",
+    unfixed: "待修复",
+  };
+  return labels[vulnerabilityMetricFilter] || labels.all;
+}
+
+function groupedVulnerabilities(source = vulnerabilities) {
   const riskRank = { Critical: 4, High: 3, Medium: 2, Low: 1 };
   const groups = new Map();
-  vulnerabilities.forEach((item) => {
+  source.forEach((item) => {
     const component = item.component || item.location || "unknown";
     const key = `${item.type}|${component}`;
     const group = groups.get(key) || {
@@ -457,9 +477,13 @@ function renderAiProgress() {
   }
 
   const percent = aiProgress.total ? Math.round((aiProgress.completed / aiProgress.total) * 100) : 0;
+  const title = document.querySelector("#aiProgressTitle");
   const count = document.querySelector("#aiProgressCount");
   const bar = document.querySelector("#aiProgressBar");
   const text = document.querySelector("#aiProgressText");
+  if (title) {
+    title.textContent = aiProgress.active ? "正在生成 AI 建议" : "AI 建议已生成";
+  }
   if (count) {
     count.textContent = `${aiProgress.completed} / ${aiProgress.total}`;
   }
@@ -1447,11 +1471,6 @@ function renderScanSummaryDrawer() {
         <div><dt>Low</dt><dd>${counts.low}</dd></div>
       </dl>
     </section>
-    <section class="detail-card">
-      <h4>查看漏洞</h4>
-      <p class="detail-copy">扫描页只展示执行状态和实时事件。具体漏洞证据、筛选、分组和状态流转在漏洞管理中处理。</p>
-      <button type="button" class="drawer-action info" id="scanDrawerOpenVulns">进入漏洞管理</button>
-    </section>
   `;
 }
 
@@ -1484,12 +1503,6 @@ function bindScanPageControls() {
   document.querySelector("#startScanButton")?.addEventListener("click", startBackendScan);
 
   document.querySelector("#openVulnerabilityManagementButton")?.addEventListener("click", () => {
-    setActiveNavigation("vulnerabilities");
-    history.replaceState(null, "", "#vulnerabilities");
-    renderFeaturePage("vulnerabilities");
-  });
-
-  document.querySelector("#scanDrawerOpenVulns")?.addEventListener("click", () => {
     setActiveNavigation("vulnerabilities");
     history.replaceState(null, "", "#vulnerabilities");
     renderFeaturePage("vulnerabilities");
@@ -1578,14 +1591,18 @@ async function renderScanPage() {
   }
 }
 
-function metricCard(label, value, tone = "total") {
+function metricCard(label, value, tone = "total", options = {}) {
+  const actionAttr = options.action ? ` data-metric-action="${escapeHtml(options.action)}" role="button" tabindex="0"` : "";
+  const activeClass = options.active ? " active" : "";
+  const interactiveClass = options.action ? " interactive" : "";
+  const icon = options.icon || (options.action ? "筛" : "");
   return `
-    <article class="summary-card ${tone}">
+    <article class="summary-card ${tone}${interactiveClass}${activeClass}"${actionAttr}>
       <div>
         <span>${label}</span>
         <strong>${value}</strong>
       </div>
-      <span class="summary-icon">!</span>
+      ${icon ? `<span class="summary-icon${options.action ? "" : " passive"}">${escapeHtml(icon)}</span>` : ""}
     </article>
   `;
 }
@@ -1614,7 +1631,8 @@ function featureTable(headers, rows, rowOptions = {}) {
 }
 
 function pageTemplate(page) {
-  const vulnerabilityGroups = groupedVulnerabilities();
+  const metricVulnerabilities = metricFilteredVulnerabilities();
+  const vulnerabilityGroups = groupedVulnerabilities(metricVulnerabilities);
   const vulnerabilityRows = vulnerabilityGroups.map((group) => [
     escapeHtml(group.type),
     escapeHtml(group.component),
@@ -1660,11 +1678,20 @@ function pageTemplate(page) {
     vulnerabilities: {
       title: "漏洞管理",
       subtitle: "按漏洞类型和组件聚合展示，减少重复证据噪音，优先处理高风险问题组。",
+      metricClass: "three-metrics",
       metrics: [
-        metricCard("总漏洞数", vulnerabilities.length),
-        metricCard("问题组", vulnerabilityGroups.length, "low"),
-        metricCard("严重漏洞", vulnerabilities.filter((item) => item.risk === "Critical").length, "critical"),
-        metricCard("待修复", vulnerabilities.filter((item) => item.status === "未修复").length, "medium"),
+        metricCard("总漏洞数", vulnerabilities.length, "total", {
+          action: "all",
+          active: vulnerabilityMetricFilter === "all",
+        }),
+        metricCard("严重漏洞", vulnerabilities.filter((item) => ["Critical", "High"].includes(item.risk)).length, "critical", {
+          action: "severe",
+          active: vulnerabilityMetricFilter === "severe",
+        }),
+        metricCard("待修复", vulnerabilities.filter((item) => item.status === "未修复").length, "medium", {
+          action: "unfixed",
+          active: vulnerabilityMetricFilter === "unfixed",
+        }),
       ].join(""),
       body: featureTable(
         ["漏洞类型", "组件", "证据数", "最高风险", "P0/P1", "未关闭", "检测方式", "操作"],
@@ -1672,7 +1699,7 @@ function pageTemplate(page) {
         { getRowId: (_row, index) => vulnerabilityGroups[index]?.firstId || "" },
       ),
       drawer:
-        `当前共有 ${vulnerabilities.length} 条证据，聚合为 ${vulnerabilityGroups.length} 个问题组。未修复 ${vulnerabilities.filter((item) => item.status === "未修复").length} 个，修复中 ${vulnerabilities.filter((item) => item.status === "修复中").length} 个。`,
+        `当前筛选：${metricFilterLabel()}。共有 ${metricVulnerabilities.length} 条证据，聚合为 ${vulnerabilityGroups.length} 个问题组。未修复 ${metricVulnerabilities.filter((item) => item.status === "未修复").length} 个，修复中 ${metricVulnerabilities.filter((item) => item.status === "修复中").length} 个。`,
     },
     assets: {
       title: "目标配置",
@@ -1824,7 +1851,7 @@ function featureStatusCopy(page) {
   }
   const latest = latestTask();
   const copies = {
-    vulnerabilities: `数据来自最近扫描任务 ${activeTaskId || latest?.task_id || "-"}，当前筛选条件下显示 ${filteredVulnerabilities().length} 条漏洞。`,
+    vulnerabilities: `数据来自最近扫描任务 ${activeTaskId || latest?.task_id || "-"}，当前筛选：${metricFilterLabel()}，显示 ${metricFilteredVulnerabilities().length} 条漏洞。`,
     assets: `扫描目标配置已持久化到 SQLite，刷新页面或重启服务后不会丢失。`,
     reports: `报告内容来自后端生成的 HTML/Markdown，已持久化到 SQLite。`,
     "ai-fix": aiSettings.key_configured
@@ -1857,7 +1884,7 @@ async function renderFeaturePage(page) {
           <button class="ghost-button" data-feature-action="refresh">刷新</button>
         </div>
       </div>
-      <div class="summary-grid">${template.metrics}</div>
+      <div class="summary-grid ${template.metricClass || ""}">${template.metrics}</div>
       <div class="feature-body">${template.body}</div>
     </section>
   `;
@@ -1875,6 +1902,26 @@ async function renderFeaturePage(page) {
       <p class="detail-copy">${featureStatusCopy(page)}</p>
     </section>
   `;
+
+  document.querySelectorAll("[data-metric-action]").forEach((card) => {
+    const applyMetricFilter = () => {
+      if (page !== "vulnerabilities") {
+        return;
+      }
+      vulnerabilityMetricFilter = card.dataset.metricAction || "all";
+      selectedVulnerabilityId = "";
+      selectedVulnerabilityIds.clear();
+      renderFeaturePage("vulnerabilities");
+      showToast(`当前筛选：${metricFilterLabel()}`);
+    };
+    card.addEventListener("click", applyMetricFilter);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        applyMetricFilter();
+      }
+    });
+  });
 
   document.querySelector("#saveSettingsButton")?.addEventListener("click", async () => {
     const button = document.querySelector("#saveSettingsButton");
