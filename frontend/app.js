@@ -25,6 +25,7 @@ let progressAnimationStart = 0;
 let progressAnimationFrom = 0;
 let currentScanTitle = "等待扫描";
 let currentScanSubtitle = "点击开始扫描后，会从后端同步真实扫描进度。";
+let activeScanStatus = null;
 let taskRecords = [];
 let reportRecords = [];
 let assetRecords = [];
@@ -96,6 +97,28 @@ const selectedItem = () =>
 
 function setDrawerClosedCopy(copy) {
   document.querySelector(".detail-drawer")?.setAttribute("data-empty-copy", copy);
+}
+
+function setDrawerOpen(open, title = "") {
+  drawerOpen = open;
+  document.querySelector(".app-shell")?.classList.toggle("drawer-collapsed", !open);
+  const drawer = document.querySelector(".detail-drawer");
+  if (!drawer) {
+    return;
+  }
+  drawer.classList.toggle("drawer-closed", !open);
+  if (title) {
+    document.querySelector(".drawer-header h2").textContent = title;
+  }
+}
+
+function navigateToPage(page) {
+  if (!document.querySelector(`.side-item[data-page="${page}"]`)) {
+    return;
+  }
+  setActiveNavigation(page);
+  history.replaceState(null, "", `#${page}`);
+  renderFeaturePage(page);
 }
 
 function currentTime() {
@@ -255,6 +278,10 @@ function safeRiskBadge(risk) {
   return `<span class="badge ${riskClass(risk)}">${escapeHtml(risk || "Low")}</span>`;
 }
 
+function riskSortValue(risk) {
+  return { Critical: 4, High: 3, Medium: 2, Low: 1 }[risk] || 0;
+}
+
 function hasModelAdvice(item) {
   const source = String(item?.adviceSource || "").toLowerCase();
   return Boolean(item?.advice?.trim()) && !["", "unknown", "local-template", "fallback-error"].includes(source);
@@ -273,6 +300,20 @@ function aiAdviceAction(item) {
     tone: "warning",
     hint: "当前展示的是本地模板或暂无建议，可调用已配置的 AI 服务补生成。",
   };
+}
+
+function vulnerabilityRiskEvents(items) {
+  return [...items]
+    .sort(
+      (a, b) =>
+        riskSortValue(a.risk) - riskSortValue(b.risk) ||
+        String(a.id).localeCompare(String(b.id), undefined, { numeric: true }),
+    )
+    .map((item) => ({
+      time: currentTime(),
+      level: "RISK",
+      text: `风险明细：${item.id} ${item.risk} ${item.type} @ ${item.location}`,
+    }));
 }
 
 function latestTask() {
@@ -334,7 +375,7 @@ function groupedVulnerabilities(source = vulnerabilities) {
 }
 
 function updateBackendStatusPanel() {
-  const latest = latestTask();
+  const latest = activeScanStatus || latestTask();
   const latestReport = reportRecords[0];
   const statusBadge = document.querySelector("#backendStatusBadge");
   const apiState = document.querySelector("#backendApiState");
@@ -528,10 +569,22 @@ function resetScanWorkspace() {
   lastRenderedEventKeys = new Set();
   modules = modules.map((module) => ({ name: module.name }));
   scanSteps = scanSteps.map((step) => ({ name: step.name, time: "等待中", status: "pending" }));
+  activeScanStatus = null;
   updateProgress(0, "等待扫描", "点击开始扫描后，会从后端同步真实扫描进度。");
 }
 
+function aiProviderLabel() {
+  const provider = aiSettings.provider || aiSettings.runtime_provider || "AI 服务";
+  const labels = {
+    qwen: "千问 Qwen",
+    deepseek: "DeepSeek",
+    openai: "OpenAI",
+  };
+  return labels[provider] || provider;
+}
+
 function syncStatus(status) {
+  activeScanStatus = status;
   activeTaskId = status.task_id || activeTaskId;
   scanTarget = status.target || scanTarget;
   scanSteps = (status.steps || scanSteps).map((step) => ({
@@ -551,7 +604,9 @@ function syncStatus(status) {
     state: module.name.includes(runningModule) || runningModule.includes(module.name) ? "进行中" : undefined,
   }));
   const currentStep = displayStepName(status.current_step || "");
-  const scanTitle = status.status === "completed" || status.progress >= 100 ? "扫描已完成" : "扫描进行中";
+  const scanDone = status.status === "completed" && !aiProgress.active;
+  const displayProgress = aiProgress.active ? Math.min(Number(status.progress) || 0, 92) : status.progress;
+  const scanTitle = scanDone ? "扫描已完成" : "扫描进行中";
   let scanSubtitle = status.current_step ? `当前阶段：${currentStep}` : "后端扫描任务正在运行。";
   if (aiProgress.active) {
     scanSubtitle = `正在生成 AI 建议：${aiProgress.completed} / ${aiProgress.total}`;
@@ -560,7 +615,7 @@ function syncStatus(status) {
   } else if (status.status === "completed") {
     scanSubtitle = "漏洞检测、AI 建议和报告生成已完成。";
   }
-  updateProgress(status.progress, scanTitle, scanSubtitle);
+  updateProgress(displayProgress, scanTitle, scanSubtitle);
   renderAllScanData();
 }
 
@@ -570,11 +625,48 @@ async function syncResult(result) {
   scanTarget = result.target || scanTarget;
   vulnerabilities = (result.vulnerabilities || []).map(mapApiVulnerability);
   selectedVulnerabilityId = vulnerabilities[0]?.id ?? "";
+  if (vulnerabilities.length) {
+    events = normalizeEventList([
+      ...events.filter((event) => !/^风险明细：VULN-\d+/i.test(event.text || "")),
+      ...vulnerabilityRiskEvents(vulnerabilities),
+    ]);
+  }
   if (result.errors?.length) {
     appendResultErrors(result.errors);
   }
   await loadPlatformData();
   renderAllScanData();
+}
+
+async function loadResultIntoState(taskId) {
+  if (!taskId) {
+    return false;
+  }
+  const result = await apiRequest(`/scan/result/${taskId}`);
+  latestRisk = { ...(result.risk || {}), started_at: result.created_at };
+  latestReports = result.reports || {};
+  scanTarget = result.target || scanTarget;
+  vulnerabilities = (result.vulnerabilities || []).map(mapApiVulnerability);
+  selectedVulnerabilityId = selectedVulnerabilityId || vulnerabilities[0]?.id || "";
+  return true;
+}
+
+async function ensureFeatureVulnerabilities(page) {
+  if (!["vulnerabilities", "ai-fix"].includes(page) || vulnerabilities.length) {
+    return;
+  }
+  const completedTask = activeTaskId
+    ? taskRecords.find((task) => task.task_id === activeTaskId && task.status === "completed")
+    : taskRecords.find((task) => task.status === "completed");
+  if (!completedTask) {
+    return;
+  }
+  try {
+    activeTaskId = completedTask.task_id;
+    await loadResultIntoState(completedTask.task_id);
+  } catch (error) {
+    addEvent("WARN", `最近扫描结果读取失败：${error.message}`);
+  }
 }
 
 async function fetchScanResult() {
@@ -616,7 +708,7 @@ async function refreshActiveScanStatus() {
   if (!activeTaskId) {
     await loadPlatformData();
     const latestRunningTask = taskRecords.find((task) => task.status === "running" || task.status === "cancelling");
-    activeTaskId = latestRunningTask?.task_id || latestTask()?.task_id || "";
+    activeTaskId = latestRunningTask?.task_id || "";
   }
   if (!activeTaskId) {
     return;
@@ -683,13 +775,11 @@ async function loadBackendSettings() {
     };
     addEvent("INFO", `已连接后端 API：${settings.api_base_url || API_BASE}`);
     await loadPlatformData();
-    const latestBackendTask = taskRecords[0];
-    if (latestBackendTask && !activeTaskId) {
-      activeTaskId = latestBackendTask.task_id;
-      syncStatus(latestBackendTask);
-      if (latestBackendTask.status === "completed") {
-        await fetchScanResult();
-      } else if (latestBackendTask.status === "running" || latestBackendTask.status === "cancelling") {
+    const latestRunningTask = taskRecords.find((task) => task.status === "running" || task.status === "cancelling");
+    if (latestRunningTask && !activeTaskId) {
+      activeTaskId = latestRunningTask.task_id;
+      syncStatus(latestRunningTask);
+      if (latestRunningTask.status === "running" || latestRunningTask.status === "cancelling") {
         statusPollTimer = window.setInterval(pollScanStatus, 1500);
       }
     } else if (!activeTaskId) {
@@ -742,7 +832,7 @@ async function saveAiKey(provider, apiKey, model) {
 }
 
 function eventSignature(event) {
-  return `${event.level}|${String(event.text || "").replace(/\bVULN-\d+\b/g, "VULN-*")}`;
+  return `${event.level}|${event.text}`;
 }
 
 function eventKey(event) {
@@ -790,15 +880,93 @@ function updateNotificationBadge() {
   button.setAttribute("aria-label", unreadCount > 0 ? `通知，${unreadCount} 条未读` : "通知，无未读");
 }
 
+function isAiAdviceEventText(text) {
+  const value = String(text || "");
+  return (
+    /正在生成 AI 建议：VULN-\d+/i.test(value) ||
+    /^AI 建议已完成[:：]?\s*(VULN-\d+|\d+)/i.test(value) ||
+    /^正在批量生成 AI 建议$/i.test(value) ||
+    /^AI 建议批量完成$/i.test(value) ||
+    /^AI 建议已生成 \d+ 条/i.test(value) ||
+    /^AI 建议生成开始[:：]/i.test(value) ||
+    /^AI 建议接口调用失败/i.test(value) ||
+    /^\d+ 个漏洞的 AI 建议接口失败/i.test(value)
+  );
+}
+
+function compactEventText(text) {
+  const value = String(text || "");
+  if (/正在生成 AI 建议：VULN-\d+/i.test(value)) {
+    return "正在批量生成 AI 建议";
+  }
+  if (/^AI 建议已完成[:：]?\s*(VULN-\d+|\d+)/i.test(value)) {
+    return "AI 建议批量完成";
+  }
+  return value;
+}
+
+function eventDisplayText(event) {
+  const count = Number(event.count || 1);
+  if (event.text === "AI 建议生成汇总") {
+    const fallback = event.fallbackCount || 0;
+    const total = fallback || event.total || count;
+    return fallback
+      ? `AI 建议已生成 ${total} 条，其中 ${fallback} 条使用本地模板兜底`
+      : `AI 建议已生成 ${total} 条`;
+  }
+  if (event.text === "AI 建议批量完成" && count > 1) {
+    return `${event.text}（${count} 条漏洞）`;
+  }
+  if (event.text === "正在批量生成 AI 建议" && count > 1) {
+    return `${event.text}（${count} 条漏洞）`;
+  }
+  return `${event.text}${count > 1 ? ` ×${count}` : ""}`;
+}
+
 function normalizeEventList(rawEvents, limit = 50) {
   const normalized = [];
+  let aiSummary = null;
   rawEvents.forEach((event) => {
+    const originalText = event.text || event.message || "";
     const next = {
       time: event.time || currentTime(),
       level: event.level || "INFO",
-      text: event.text || event.message || "",
+      text: compactEventText(originalText),
       count: Number(event.count || 1),
     };
+
+    if (isAiAdviceEventText(next.text) || isAiAdviceEventText(originalText)) {
+      const completedMatch = String(originalText).match(/AI 建议已完成[:：]?\s*(\d+)\s*\/\s*(\d+)/i);
+      const fallbackMatch = String(originalText).match(/^(\d+) 个漏洞的 AI 建议接口失败/i);
+      const generatedMatch = String(originalText).match(/^AI 建议已生成\s+(\d+)\s+条/i);
+      const directCountMatch = String(originalText).match(/（(\d+) 条漏洞）/);
+      aiSummary = aiSummary || {
+        time: next.time,
+        level: "INFO",
+        text: "AI 建议生成汇总",
+        count: 0,
+        total: 0,
+        fallbackCount: 0,
+      };
+      aiSummary.time = next.time;
+      aiSummary.count += next.count;
+      if (completedMatch) {
+        aiSummary.total = Math.max(aiSummary.total, Number(completedMatch[1]), Number(completedMatch[2]));
+      } else if (generatedMatch) {
+        aiSummary.total = Math.max(aiSummary.total, Number(generatedMatch[1]));
+      } else if (directCountMatch) {
+        aiSummary.total = Math.max(aiSummary.total, Number(directCountMatch[1]));
+      } else {
+        aiSummary.total = Math.max(aiSummary.total, aiSummary.count);
+      }
+      if (fallbackMatch) {
+        aiSummary.level = "WARN";
+        aiSummary.fallbackCount = Math.max(aiSummary.fallbackCount, Number(fallbackMatch[1]));
+        aiSummary.total = Math.max(aiSummary.total, aiSummary.fallbackCount);
+      }
+      return;
+    }
+
     const previous = normalized[normalized.length - 1];
     if (previous && eventSignature(previous) === eventSignature(next)) {
       previous.count = (previous.count || 1) + (next.count || 1);
@@ -807,7 +975,14 @@ function normalizeEventList(rawEvents, limit = 50) {
     }
     normalized.push(next);
   });
-  return normalized.slice(-limit);
+  if (aiSummary) {
+    normalized.push(aiSummary);
+  }
+  const hasRiskDetails = normalized.some((event) => /^风险明细：VULN-\d+/i.test(event.text || ""));
+  const cleaned = hasRiskDetails
+    ? normalized.filter((event) => !/^扫描完成，发现 \d+ 个漏洞/.test(event.text || ""))
+    : normalized;
+  return cleaned.slice(-limit);
 }
 
 function appendResultErrors(errors) {
@@ -920,7 +1095,7 @@ function renderEvents() {
         <div class="event-item${isNew ? " is-new" : ""}">
           <time>${event.time}</time>
           <span class="event-level ${event.level.toLowerCase()}">${event.level}</span>
-          <span>${event.text}${event.count > 1 ? ` ×${event.count}` : ""}</span>
+          <span>${escapeHtml(eventDisplayText(event))}</span>
         </div>
       `;
     })
@@ -1138,20 +1313,16 @@ function updateBulkSelectionUi() {
 
 function selectVulnerability(id) {
   selectedVulnerabilityId = id;
-  drawerOpen = true;
   setDrawerClosedCopy("点击漏洞行查看详情");
-  document.querySelector(".drawer-header h2").textContent = "漏洞详情";
-  document.querySelector(".detail-drawer").classList.remove("drawer-closed");
+  setDrawerOpen(true, "漏洞详情");
   renderRows();
   renderDetail();
 }
 
 function openVulnerabilityDetail(id) {
   selectedVulnerabilityId = id;
-  drawerOpen = true;
   setDrawerClosedCopy("点击漏洞行查看详情");
-  document.querySelector(".drawer-header h2").textContent = "漏洞详情";
-  document.querySelector(".detail-drawer").classList.remove("drawer-closed");
+  setDrawerOpen(true, "漏洞详情");
   renderRows();
   renderDetail();
   showToast(`已打开 ${selectedVulnerabilityId} 的漏洞详情`);
@@ -1159,9 +1330,7 @@ function openVulnerabilityDetail(id) {
 
 function openAiFixForVulnerability(id) {
   selectedVulnerabilityId = id;
-  setActiveNavigation("ai-fix");
-  history.replaceState(null, "", "#ai-fix");
-  renderFeaturePage("ai-fix");
+  navigateToPage("ai-fix");
   showToast(`已打开 ${selectedVulnerabilityId} 的 AI 建议详情`);
 }
 
@@ -1266,7 +1435,10 @@ function showVulnerabilityModal() {
       <div><dt>证据数量</dt><dd>${escapeHtml(item.evidence)}</dd></div>
     </dl>
     <p class="modal-copy">${escapeHtml(item.description)}</p>
-    ${item.payload ? `<div class="code-suggestion"><strong>原始证据</strong><span>默认隐藏，需在漏洞详情抽屉中展开查看。</span></div>` : ""}
+    <div class="code-suggestion">
+      <strong>原始证据</strong>
+      <span>${item.payload ? escapeHtml(item.payload) : "本条漏洞未记录可展示的原始请求或测试输入。"}</span>
+    </div>
     ${item.evidenceText ? `<div class="code-suggestion"><strong>检测证据</strong><span>${escapeHtml(item.evidenceText)}</span></div>` : ""}`,
   );
 }
@@ -1278,6 +1450,15 @@ async function showAdviceModal() {
     return;
   }
   if (activeTaskId) {
+    if (aiSettings.key_configured) {
+      const confirmed = window.confirm(
+        `将把 ${item.id} 的漏洞类型、位置、检测证据和修复上下文发送到 ${aiProviderLabel()} / ${aiSettings.model || "默认模型"} 生成建议。是否继续？`,
+      );
+      if (!confirmed) {
+        showToast("已取消 AI 建议生成");
+        return;
+      }
+    }
     try {
       const data = await apiRequest(`/vulnerability/${item.id}/ai-advice`, {
         method: "POST",
@@ -1313,9 +1494,8 @@ function exportReport() {
   const item = selectedItem();
   if (activeTaskId && (latestReports.html_url || latestReports.markdown_url)) {
     const url = latestReports.html_url || latestReports.markdown_url;
-    window.open(apiUrl(url), "_blank", "noopener");
-    addEvent("INFO", `已打开 ${activeTaskId} 的后端 HTML 报告`);
-    showToast("已打开渲染后的 HTML 报告");
+    openReportPreview(url);
+    addEvent("INFO", `已打开 ${activeTaskId} 的后端报告预览`);
     return;
   }
   if (!item) {
@@ -1356,6 +1536,27 @@ ${item.advice}
   URL.revokeObjectURL(url);
   addEvent("INFO", `已导出 ${item.id} 的 Markdown 报告`);
   showToast("漏洞摘要已下载为 Markdown");
+}
+
+async function openReportPreview(reportUrl) {
+  try {
+    const response = await fetch(apiUrl(reportUrl));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const content = await response.text();
+    if (reportUrl.endsWith("/markdown")) {
+      showModal("Markdown 报告", `<div class="markdown-body">${renderMarkdownLite(content)}</div>`);
+    } else {
+      showModal(
+        "HTML 报告预览",
+        `<iframe class="report-preview" title="HTML 报告预览" srcdoc="${escapeHtml(content)}"></iframe>`,
+      );
+    }
+    showToast("报告预览已打开");
+  } catch (error) {
+    showModal("查看报告", `<p class="modal-copy">报告读取失败：${escapeHtml(error.message)}</p>`);
+  }
 }
 
 async function updateSelectedStatus(status) {
@@ -1431,7 +1632,7 @@ function renderScanSummaryDrawer() {
   if (!detail) {
     return;
   }
-  const latest = latestTask();
+  const latest = activeScanStatus || latestTask();
   const counts = vulnerabilities.reduce(
     (acc, item) => {
       acc.total += 1;
@@ -1443,7 +1644,8 @@ function renderScanSummaryDrawer() {
     },
     { total: 0, critical: 0, high: 0, medium: 0, low: 0 },
   );
-  const progress = Number.isFinite(Number(latest?.progress)) ? Number(latest.progress) : currentProgress;
+  const rawProgress = Number.isFinite(Number(latest?.progress)) ? Number(latest.progress) : currentProgress;
+  const progress = aiProgress.active ? Math.min(rawProgress, 92) : rawProgress;
   const taskId = activeTaskId || latest?.task_id || "-";
   const aiStatus = aiProgress.total
     ? `${aiProgress.completed} / ${aiProgress.total}${aiProgress.active ? " 生成中" : " 已完成"}`
@@ -1454,7 +1656,7 @@ function renderScanSummaryDrawer() {
       <h4>当前扫描</h4>
       <dl class="detail-list">
         <div><dt>任务</dt><dd>${escapeHtml(taskId)}</dd></div>
-        <div><dt>状态</dt><dd>${latest ? statusLabel(latest.status) : currentScanTitle}</dd></div>
+        <div><dt>状态</dt><dd>${aiProgress.active ? "生成 AI 建议中" : latest ? statusLabel(latest.status) : currentScanTitle}</dd></div>
         <div><dt>进度</dt><dd>${escapeHtml(Math.round(progress))}%</dd></div>
         <div><dt>AI 建议</dt><dd>${escapeHtml(aiStatus)}</dd></div>
         <div><dt>目标</dt><dd>${escapeHtml(scanTarget.base_url)}</dd></div>
@@ -1503,9 +1705,7 @@ function bindScanPageControls() {
   document.querySelector("#startScanButton")?.addEventListener("click", startBackendScan);
 
   document.querySelector("#openVulnerabilityManagementButton")?.addEventListener("click", () => {
-    setActiveNavigation("vulnerabilities");
-    history.replaceState(null, "", "#vulnerabilities");
-    renderFeaturePage("vulnerabilities");
+    navigateToPage("vulnerabilities");
   });
 
   document.querySelector("#toggleEventsButton")?.addEventListener("click", () => {
@@ -1572,8 +1772,7 @@ function bindScanPageControls() {
 async function renderScanPage() {
   document.querySelector(".workspace").innerHTML = initialWorkspaceTemplate;
   setDrawerClosedCopy("扫描摘要已收起，可从漏洞管理查看具体漏洞");
-  document.querySelector(".drawer-header h2").textContent = "扫描摘要";
-  document.querySelector(".detail-drawer").classList.remove("drawer-closed");
+  setDrawerOpen(false, "扫描摘要");
   paintProgress(displayedProgress);
   renderTargetInfo();
   updateProgress(currentProgress, currentScanTitle, currentScanSubtitle);
@@ -1620,7 +1819,12 @@ function featureTable(headers, rows, rowOptions = {}) {
         <tbody>
           ${rows.map((row, index) => {
             const rowId = rowOptions.getRowId?.(row, index) || "";
-            const selectedClass = rowId && rowId === selectedVulnerabilityId ? " class=\"selected\"" : "";
+            const rowClass = rowOptions.getRowClass?.(row, index) || "";
+            const classes = [
+              rowId && rowId === selectedVulnerabilityId ? "selected" : "",
+              rowClass,
+            ].filter(Boolean).join(" ");
+            const selectedClass = classes ? ` class="${escapeHtml(classes)}"` : "";
             const rowAttr = rowId ? ` data-vuln-row-id="${escapeHtml(rowId)}"` : "";
             return `<tr${selectedClass}${rowAttr}>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
           }).join("")}
@@ -1632,16 +1836,21 @@ function featureTable(headers, rows, rowOptions = {}) {
 
 function pageTemplate(page) {
   const metricVulnerabilities = metricFilteredVulnerabilities();
-  const vulnerabilityGroups = groupedVulnerabilities(metricVulnerabilities);
-  const vulnerabilityRows = vulnerabilityGroups.map((group) => [
-    escapeHtml(group.type),
-    escapeHtml(group.component),
-    escapeHtml(group.count),
-    safeRiskBadge(group.highestRisk),
-    escapeHtml(group.p0p1),
-    escapeHtml(group.open),
-    escapeHtml([...group.methods].join(" / ")),
-    `<button class="mini-text-button" data-view-fix-vuln-id="${escapeHtml(group.firstId)}">查看代表漏洞</button>`,
+  const vulnerabilityItems = [...metricVulnerabilities].sort(
+    (a, b) =>
+      riskSortValue(b.risk) - riskSortValue(a.risk) ||
+      String(a.id).localeCompare(String(b.id), undefined, { numeric: true }),
+  );
+  const vulnerabilityRows = vulnerabilityItems.map((item) => [
+    escapeHtml(item.id),
+    escapeHtml(item.type),
+    safeRiskBadge(item.risk),
+    escapeHtml(item.remediationPriority || "P3"),
+    `<span class="${statusClass(item.status)}">● ${escapeHtml(item.status)}</span>`,
+    escapeHtml(item.location),
+    `<span class="method">${escapeHtml(item.method)}</span>`,
+    escapeHtml(item.evidence),
+    `<button class="mini-text-button" data-view-fix-vuln-id="${escapeHtml(item.id)}">查看详情</button>`,
   ]);
   const assetRows = assetRecords.map((item) => [
     escapeHtml(item.name),
@@ -1677,7 +1886,7 @@ function pageTemplate(page) {
   const templates = {
     vulnerabilities: {
       title: "漏洞管理",
-      subtitle: "按漏洞类型和组件聚合展示，减少重复证据噪音，优先处理高风险问题组。",
+      subtitle: "逐条展示扫描发现的漏洞证据，按风险等级排序，优先处理 Critical 和 High。",
       metricClass: "three-metrics",
       metrics: [
         metricCard("总漏洞数", vulnerabilities.length, "total", {
@@ -1694,12 +1903,15 @@ function pageTemplate(page) {
         }),
       ].join(""),
       body: featureTable(
-        ["漏洞类型", "组件", "证据数", "最高风险", "P0/P1", "未关闭", "检测方式", "操作"],
+        ["漏洞 ID", "问题类型", "风险等级", "优先级", "状态", "位置", "检测方式", "证据数", "操作"],
         vulnerabilityRows,
-        { getRowId: (_row, index) => vulnerabilityGroups[index]?.firstId || "" },
+        {
+          getRowId: (_row, index) => vulnerabilityItems[index]?.id || "",
+          getRowClass: (_row, index) => `risk-row risk-${riskClass(vulnerabilityItems[index]?.risk)}`,
+        },
       ),
       drawer:
-        `当前筛选：${metricFilterLabel()}。共有 ${metricVulnerabilities.length} 条证据，聚合为 ${vulnerabilityGroups.length} 个问题组。未修复 ${metricVulnerabilities.filter((item) => item.status === "未修复").length} 个，修复中 ${metricVulnerabilities.filter((item) => item.status === "修复中").length} 个。`,
+        `当前筛选：${metricFilterLabel()}。逐条显示 ${metricVulnerabilities.length} 条漏洞证据，Critical ${metricVulnerabilities.filter((item) => item.risk === "Critical").length} 条，High ${metricVulnerabilities.filter((item) => item.risk === "High").length} 条，未修复 ${metricVulnerabilities.filter((item) => item.status === "未修复").length} 条。`,
     },
     assets: {
       title: "目标配置",
@@ -1769,7 +1981,7 @@ function pageTemplate(page) {
               </div>
               <div>
                 <strong>原始证据</strong>
-                <code>${currentFixItem?.payload ? "默认隐藏，可在漏洞详情中展开查看。" : "-"}</code>
+                <code>${escapeHtml(currentFixItem?.payload || "本条漏洞未记录可展示的原始请求或测试输入。")}</code>
               </div>
               <div>
                 <strong>影响位置</strong>
@@ -1777,6 +1989,11 @@ function pageTemplate(page) {
               </div>
             </div>
             <p class="ai-action-hint">${escapeHtml(currentAdviceAction.hint)}</p>
+            <div class="external-ai-warning">
+              ${aiSettings.key_configured
+                ? `点击生成会把当前漏洞的类型、位置、检测证据和修复上下文发送到 ${escapeHtml(aiProviderLabel())} / ${escapeHtml(aiSettings.model || "默认模型")}。`
+                : "当前未配置 API Key，点击生成会调用后端并使用本地中文模板兜底，不会发送到外部模型服务。"}
+            </div>
             <button class="drawer-action ${currentAdviceAction.tone} ai-generate-button" data-ai-action="generate">${escapeHtml(currentAdviceAction.label)}</button>
           </section>
         </div>
@@ -1870,6 +2087,7 @@ async function renderFeaturePage(page) {
   }
 
   await loadPlatformData();
+  await ensureFeatureVulnerabilities(page);
   const template = pageTemplate(page);
   document.querySelector(".workspace").innerHTML = `
     <section class="feature-page panel">
@@ -1889,9 +2107,8 @@ async function renderFeaturePage(page) {
     </section>
   `;
 
-  document.querySelector(".drawer-header h2").textContent = template.title;
   setDrawerClosedCopy(page === "vulnerabilities" ? "点击漏洞行查看详情" : "详情面板已收起");
-  document.querySelector(".detail-drawer").classList.remove("drawer-closed");
+  setDrawerOpen(false, template.title);
   document.querySelector("#detailContent").innerHTML = `
     <section class="detail-card">
       <h4>数据摘要</h4>
@@ -2048,9 +2265,7 @@ async function renderFeaturePage(page) {
   });
 
   document.querySelector("#openVulnerabilityManagementButton")?.addEventListener("click", () => {
-    setActiveNavigation("vulnerabilities");
-    history.replaceState(null, "", "#vulnerabilities");
-    renderFeaturePage("vulnerabilities");
+    navigateToPage("vulnerabilities");
   });
 
   document.querySelectorAll("[data-fix-vuln-id]").forEach((button) => {
@@ -2086,8 +2301,7 @@ async function renderFeaturePage(page) {
           showToast("Markdown 报告已下载");
           return;
         }
-        window.open(apiUrl(reportUrl), "_blank", "noopener");
-        showToast("已打开报告预览");
+        await openReportPreview(reportUrl);
         return;
       }
       if (button.dataset.assetScan) {
@@ -2147,7 +2361,7 @@ async function renderFeaturePage(page) {
         await loadPlatformData();
         renderFeaturePage(page);
         if (data.html_url) {
-          window.open(apiUrl(data.html_url), "_blank", "noopener");
+          await openReportPreview(data.html_url);
         }
         showToast("报告已按当前模板重新生成");
         return;
@@ -2228,6 +2442,12 @@ function bindChromeInteractions() {
   };
 
   document.addEventListener("click", (event) => {
+    if (event.target.closest("#openVulnerabilityManagementButton")) {
+      event.preventDefault();
+      navigateToPage("vulnerabilities");
+      return;
+    }
+
     const detailButton = event.target.closest("[data-view-fix-vuln-id]");
     if (detailButton) {
       event.stopPropagation();
@@ -2282,10 +2502,10 @@ function bindChromeInteractions() {
   });
 
   document.querySelector("#closeDrawerButton").addEventListener("click", () => {
-    drawerOpen = false;
+    const nextOpen = !drawerOpen;
+    setDrawerOpen(nextOpen);
     const drawer = document.querySelector(".detail-drawer");
-    drawer.classList.add("drawer-closed");
-    showToast(drawer.dataset.emptyCopy || "详情面板已收起");
+    showToast(nextOpen ? "详情面板已展开" : drawer.dataset.emptyCopy || "详情面板已收起");
   });
 
   document.querySelector("#modalCloseButton").addEventListener("click", closeModal);
@@ -2322,6 +2542,8 @@ async function boot() {
   renderSummary();
   renderRows();
   renderDetail();
+  setDrawerClosedCopy("扫描摘要已收起，可从漏洞管理查看具体漏洞");
+  setDrawerOpen(false, "扫描摘要");
   updateNotificationBadge();
   bindScanPageControls();
   bindChromeInteractions();

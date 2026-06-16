@@ -64,6 +64,10 @@ button:disabled {
   grid-template-rows: 66px 1fr;
 }
 
+.app-shell.drawer-collapsed {
+  grid-template-columns: 236px minmax(820px, 1fr) 56px;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -1192,12 +1196,15 @@ input[type="checkbox"] {
 .detail-drawer {
   grid-column: 3;
   grid-row: 2;
+  min-width: 0;
+  overflow: auto;
   padding: 18px;
   border-top: 0;
   border-right: 0;
   border-bottom: 0;
   border-radius: 0;
   background: rgba(9, 15, 25, 0.96);
+  transition: padding 180ms ease;
 }
 
 .drawer-header {
@@ -1315,12 +1322,36 @@ input[type="checkbox"] {
   display: none;
 }
 
-.drawer-closed::after {
+.drawer-closed {
+  padding: 12px 8px;
+}
+
+.drawer-closed .drawer-header {
   display: grid;
-  height: calc(100vh - 140px);
-  place-items: center;
+  gap: 12px;
+  justify-items: center;
+}
+
+.drawer-closed .drawer-header h2 {
+  writing-mode: vertical-rl;
   color: var(--muted);
-  content: attr(data-empty-copy);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.drawer-closed .icon-button {
+  width: 34px;
+  height: 34px;
+  font-size: 0;
+}
+
+.drawer-closed .icon-button::before {
+  content: "<";
+  font-size: 18px;
+}
+
+.drawer-closed::after {
+  display: none;
 }
 
 .empty-state {
@@ -1372,7 +1403,9 @@ input[type="checkbox"] {
 }
 
 .modal {
-  width: min(560px, 100%);
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
   background:
@@ -1391,6 +1424,8 @@ input[type="checkbox"] {
 
 .modal-body {
   padding: 18px;
+  max-height: calc(100vh - 138px);
+  overflow: auto;
 }
 
 .modal-copy {
@@ -1540,11 +1575,19 @@ input[type="checkbox"] {
   font-family: "JetBrains Mono", Consolas, monospace;
 }
 
+.report-preview {
+  width: 100%;
+  min-height: min(620px, calc(100vh - 180px));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .feature-page {
   grid-column: 1 / -1;
   min-height: calc(100vh - 94px);
   padding: 24px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .feature-header {
@@ -1593,10 +1636,14 @@ input[type="checkbox"] {
 }
 
 .feature-table {
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.075);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.018);
+}
+
+.feature-table table {
+  min-width: 900px;
 }
 
 .feature-table tbody tr {
@@ -1606,6 +1653,50 @@ input[type="checkbox"] {
 .feature-table tbody tr:hover {
   background: rgba(47, 140, 255, 0.07);
   box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.feature-table tbody tr.risk-row {
+  box-shadow: inset 3px 0 0 rgba(112, 128, 144, 0.7);
+}
+
+.feature-table tbody tr.risk-critical {
+  background: rgba(255, 75, 85, 0.045);
+  box-shadow: inset 3px 0 0 var(--critical);
+}
+
+.feature-table tbody tr.risk-high {
+  background: rgba(255, 159, 28, 0.042);
+  box-shadow: inset 3px 0 0 var(--high);
+}
+
+.feature-table tbody tr.risk-medium {
+  background: rgba(255, 209, 102, 0.036);
+  box-shadow: inset 3px 0 0 var(--medium);
+}
+
+.feature-table tbody tr.risk-low {
+  background: rgba(58, 160, 255, 0.032);
+  box-shadow: inset 3px 0 0 #58a6ff;
+}
+
+.feature-table tbody tr.risk-critical:hover,
+.feature-table tbody tr.risk-critical.selected {
+  background: rgba(255, 75, 85, 0.09);
+}
+
+.feature-table tbody tr.risk-high:hover,
+.feature-table tbody tr.risk-high.selected {
+  background: rgba(255, 159, 28, 0.08);
+}
+
+.feature-table tbody tr.risk-medium:hover,
+.feature-table tbody tr.risk-medium.selected {
+  background: rgba(255, 209, 102, 0.07);
+}
+
+.feature-table tbody tr.risk-low:hover,
+.feature-table tbody tr.risk-low.selected {
+  background: rgba(58, 160, 255, 0.07);
 }
 
 .mini-text-button {
@@ -1771,9 +1862,23 @@ input[type="checkbox"] {
   width: 160px;
 }
 
+.external-ai-warning {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  color: #ffd18a;
+  border: 1px solid rgba(255, 184, 77, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 184, 77, 0.08);
+  line-height: 1.65;
+}
+
 @media (max-width: 1700px) {
   .app-shell {
     grid-template-columns: 220px minmax(0, 1fr) 340px;
+  }
+
+  .app-shell.drawer-collapsed {
+    grid-template-columns: 220px minmax(0, 1fr) 54px;
   }
 
   .workspace {
@@ -1819,6 +1924,10 @@ input[type="checkbox"] {
 @media (max-width: 1440px) {
   .app-shell {
     grid-template-columns: 206px minmax(0, 1fr) 326px;
+  }
+
+  .app-shell.drawer-collapsed {
+    grid-template-columns: 206px minmax(0, 1fr) 54px;
   }
 
   .workspace {
